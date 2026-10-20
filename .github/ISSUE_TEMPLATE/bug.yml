@@ -1,0 +1,35 @@
+name: Bug report
+description: Help reproduce a problem with AdBlockee.
+body:
+  - type: input
+    id: spotify
+    attributes:
+      label: Spotify version
+    validations:
+      required: true
+  - type: input
+    id: spicetify
+    attributes:
+      label: Spicetify version
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system
+    validations:
+      required: true
+  - type: dropdown
+    id: method
+    attributes:
+      label: Installation method
+      options: [Marketplace, Manual]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: What happened?
+      description: Include steps, expected behavior, AdBlockee status, and screenshots or console warnings where useful. Remove personal information.
+    validations:
+      required: true
