@@ -1,6 +1,6 @@
 # AdBlockee
 
-**Less advertising. More music.** Block music ads and clean up sponsored playlists — right down to the “Limited ads” labels, sponsor cards and empty space they leave behind.
+Block music ads and clean up sponsored playlists — right down to the “Limited ads” labels, sponsor cards and empty space they leave behind.
 
 For Spotify desktop with Spicetify. No extra account or blocking app needed.
 
