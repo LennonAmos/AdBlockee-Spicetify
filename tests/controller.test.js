@@ -10,7 +10,8 @@ function fixture({ missing = false, failAudio = false, failConfig = false, hangA
   const nodes = new Map();
   const events = new Map();
   const listeners = new Map();
-  const calls = { overrides: [], restores: [], disabled: [], slots: [], clear: [], warnings: [], menus: 0 };
+  const calls = { overrides: [], restores: [], disabled: [], slots: [], endpoints: [], clear: [], warnings: [], menus: 0, cancelled: 0 };
+  const slotEvents = new Map();
   const body = { append(node) { nodes.set(node.id, node); } };
   const document = {
     head: body,
@@ -30,7 +31,11 @@ function fixture({ missing = false, failAudio = false, failConfig = false, hangA
     },
   });
   const connector = {
-    async enableSlot(slot, enabled) { calls.slots.push([slot, enabled]); },
+    // Match the native API: even passing false would ENABLE a slot.
+    async enableSlot(slot) { calls.slots.push([slot, true]); },
+    async updateAdServerEndpoint(slots, url) { calls.endpoints.push({ slots, url }); return { status: 0 }; },
+    subscribeToSlot(slot, callback) { slotEvents.set(slot, callback); return { cancel() { calls.cancelled++; slotEvents.delete(slot); } }; },
+    async getSlot(slot) { return { adSlot: { slotId: slot, hasActiveAd: false, availableAds: [] } }; },
     async clearSlot(slot) { calls.clear.push(slot); },
   };
   const product = {
@@ -84,7 +89,7 @@ function fixture({ missing = false, failAudio = false, failConfig = false, hangA
     }
     throw Error("Too many callbacks");
   }
-  return { host, api, calls, nodes, events, listeners, timers, advance };
+  return { host, api, calls, nodes, events, listeners, timers, advance, slotEvents, connector };
 }
 
 test("disables music ad controls without changing subscription/catalogue properties", async () => {
@@ -95,8 +100,10 @@ test("disables music ad controls without changing subscription/catalogue propert
   assert.equal(result.cosmetic, true);
   assert.equal(result.slotCount, 2);
   assert.deepEqual(f.calls.overrides, [{ pairs: { ads: "0" } }]);
-  assert.deepEqual(f.calls.slots, [["stream", false], ["embedded-playlist", false]]);
-  assert.deepEqual(f.calls.clear, ["stream"]);
+  assert.deepEqual(f.calls.slots, []);
+  assert.deepEqual(f.calls.clear, []);
+  assert.equal(f.calls.endpoints.length, 2);
+  assert.ok(f.calls.endpoints.every(x => x.url === "http://127.0.0.1:9/adblockee"));
   assert.ok(f.calls.disabled.includes("leaderboard"));
   assert.equal(f.calls.menus, 1);
   await controller.dispose();
@@ -106,6 +113,7 @@ test("disables music ad controls without changing subscription/catalogue propert
   assert.equal(f.listeners.size, 0);
   assert.equal(f.events.size, 0);
   assert.equal(f.calls.menus, 0);
+  assert.equal(f.slotEvents.size, 0);
 });
 
 test("starts cosmetic protection before Spicetify loads and recovers when APIs arrive", async () => {
@@ -172,13 +180,81 @@ test("rapid refresh requests share one operation instead of stacking API calls",
   const f = fixture();
   const controller = createController(f.host);
   const results = await Promise.all([controller.start(), controller.refresh(), controller.refresh()]);
-  assert.ok(results.every(result => result.version === "2.0.1"));
+  assert.ok(results.every(result => result.version === "2.1.0"));
   assert.equal(f.calls.overrides.length, 1);
   assert.equal(f.nodes.size, 1);
   const snapshot = controller.status();
   snapshot.errors.push("external mutation");
   assert.equal(controller.status().errors.length, 0);
   await controller.dispose();
+});
+
+test("song, visibility and heartbeat refreshes do not clear empty slots or rewrite product state", async () => {
+  const f = fixture();
+  const controller = createController(f.host);
+  await controller.start();
+  const initialDisables = f.calls.disabled.length;
+  f.listeners.get("songchange")();
+  f.events.get("visibilitychange")();
+  await f.advance(60000);
+  assert.deepEqual(f.calls.clear, []);
+  assert.deepEqual(f.calls.slots, []);
+  assert.equal(f.calls.overrides.length, 1);
+  assert.equal(f.calls.endpoints.length, 2);
+  assert.equal(f.calls.disabled.length, initialDisables);
+  f.api.Platform.AdManagers.audio.enabled = true;
+  await controller.refresh();
+  assert.equal(f.calls.disabled.length, initialDisables + 1);
+  await controller.dispose();
+});
+
+test("ad arrival is intercepted immediately, DISCARD and empty events do not loop", async () => {
+  const f = fixture();
+  const controller = createController(f.host);
+  await controller.start();
+  const event = f.slotEvents.get("stream");
+  f.connector.clearSlot = async slot => {
+    f.calls.clear.push(slot);
+    event({ adSlotEvent: { eventType: 2, slotId: slot, ad: { adId: "test-ad" } } });
+  };
+  event({ adSlotEvent: { eventType: 0, slotId: "stream" } });
+  assert.deepEqual(f.calls.clear, []);
+  event({ adSlotEvent: { eventType: 0, slotId: "stream", ad: { adId: "test-ad" } } });
+  event({ adSlotEvent: { eventType: 1, slotId: "stream", ad: { adId: "test-ad" } } });
+  await f.advance(1);
+  assert.deepEqual(f.calls.clear, ["stream"]);
+  assert.equal(controller.status().intercepted, 1);
+  await controller.dispose();
+  event({ adSlotEvent: { eventType: 0, ad: { adId: "late-ad" } } });
+  await f.advance(1);
+  assert.deepEqual(f.calls.clear, ["stream"]);
+});
+
+test("already queued ads are cleared on attachment but ordinary playback stays untouched", async () => {
+  const f = fixture();
+  f.connector.getSlot = async slot => ({ adSlot: { hasActiveAd: slot === "stream", availableAds: [] } });
+  const controller = createController(f.host);
+  await controller.start();
+  assert.deepEqual(f.calls.clear, ["stream"]);
+  await controller.refresh();
+  assert.deepEqual(f.calls.clear, ["stream"]);
+  await controller.dispose();
+});
+
+test("a rejected endpoint override is retried without duplicating slot subscriptions", async () => {
+  const f = fixture();
+  let failed = true;
+  f.connector.updateAdServerEndpoint = async () => ({ status: failed ? 2 : 0 });
+  const controller = createController(f.host);
+  const started = await controller.start();
+  assert.ok(started.errors.some(e => e.includes("native status 2")));
+  assert.equal(f.slotEvents.size, 2);
+  failed = false;
+  const recovered = await controller.refresh();
+  assert.deepEqual(recovered.errors, []);
+  assert.equal(f.slotEvents.size, 2);
+  await controller.dispose();
+  assert.equal(f.calls.cancelled, 2);
 });
 
 test("the Marketplace manifest has one extension, valid resources and a square PNG preview", () => {

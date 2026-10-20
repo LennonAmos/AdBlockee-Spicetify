@@ -1,4 +1,4 @@
-/*! AdBlockee v2.0.1
+/*! AdBlockee v2.1.0
  * MIT License
  *
  * Copyright (c) 2026 LennonAmos
@@ -60,10 +60,12 @@
       display: none !important;
     }
     /* Spotify 1.3's extra-tall sponsored playlist variants only. */
-    .bXvkHCNOXigrpicAqmgd:is(.dvBGYlxl9sz3NBGlFf2T, .a9rFTjlXXl3MN3yB6J2z) {
+    .bXvkHCNOXigrpicAqmgd:is(.dvBGYlxl9sz3NBGlFf2T, .a9rFTjlXXl3MN3yB6J2z),
+    .main-entityHeader-container:is(.main-entityHeader-withSponsoredAdVideo, .main-entityHeader-withSponsoredAdVideoV3) {
       height: auto !important;
       min-height: 0 !important;
       max-height: none !important;
+      transition: none !important;
     }
     div:has(> .main-leaderboardComponent-container) {
       display: none !important;
@@ -82,8 +84,79 @@
     document.getElementById(STYLE_ID)?.remove();
   }
 
+  // src/slots.js
+  var BLOCKED_ENDPOINT = "http://127.0.0.1:9/adblockee";
+  function hasAds(value) {
+    const slot = value?.adSlot ?? value;
+    return Boolean(slot?.hasActiveAd || slot?.hasAvailableAds || slot?.availableAds?.length);
+  }
+  function createSlotGuard(connector, attempt, isActive) {
+    const watched = /* @__PURE__ */ new Map();
+    const clearing = /* @__PURE__ */ new Map();
+    let stopped = false;
+    let intercepted = 0;
+    async function setEndpoint(slot, entry) {
+      if (entry.endpoint || stopped || !isActive() || typeof connector.updateAdServerEndpoint !== "function") return;
+      const result = await attempt(`ad endpoint ${slot}`, async () => {
+        const response = await connector.updateAdServerEndpoint([slot], BLOCKED_ENDPOINT);
+        if (response?.status && response.status !== 0) throw Error(`native status ${response.status}`);
+      });
+      entry.endpoint = result.ok;
+    }
+    function clear(slot) {
+      if (stopped || !isActive()) return Promise.resolve();
+      if (clearing.has(slot)) return clearing.get(slot);
+      const pending = attempt(`clear ${slot}`, () => connector.clearSlot(slot)).then((result) => {
+        if (result.ok) intercepted++;
+      }).finally(() => clearing.delete(slot));
+      clearing.set(slot, pending);
+      return pending;
+    }
+    async function watch(slot) {
+      if (stopped || !isActive()) return false;
+      const existing = watched.get(slot);
+      if (existing) {
+        await setEndpoint(slot, existing);
+        return existing.ready;
+      }
+      const entry = { subscription: null, ready: false, endpoint: false };
+      watched.set(slot, entry);
+      if (typeof connector.subscribeToSlot !== "function") {
+        watched.delete(slot);
+        return false;
+      }
+      const subscription = await attempt(`watch ${slot}`, () => connector.subscribeToSlot(slot, (message) => {
+        const event = message?.adSlotEvent;
+        if (event?.ad && (event.eventType === 0 || event.eventType === 1)) clear(slot);
+      }));
+      if (subscription.ok) entry.subscription = subscription.value;
+      if (stopped || !isActive()) {
+        entry.subscription?.cancel?.();
+        return false;
+      }
+      if (!subscription.ok) {
+        watched.delete(slot);
+        return false;
+      }
+      entry.ready = true;
+      await setEndpoint(slot, entry);
+      if (typeof connector.getSlot === "function" && !stopped && isActive()) {
+        const current = await attempt(`inspect ${slot}`, () => connector.getSlot(slot));
+        if (current.ok && hasAds(current.value)) await clear(slot);
+      }
+      return true;
+    }
+    async function dispose() {
+      stopped = true;
+      for (const { subscription } of watched.values()) subscription?.cancel?.();
+      watched.clear();
+      await Promise.all([...clearing.values()]);
+    }
+    return { watch, dispose, count: () => [...watched.values()].filter((e) => e.ready).length, intercepted: () => intercepted };
+  }
+
   // src/controller.js
-  var VERSION = "2.0.1";
+  var VERSION = "2.1.0";
   var MUSIC_SLOTS = /* @__PURE__ */ new Set([
     "stream",
     "preroll",
@@ -92,6 +165,7 @@
     "sponsored-playlist",
     "embedded-npv",
     "embedded-playlist",
+    "embedded-playlist-leavebehind",
     "stream-user-actions",
     "music-see-all"
   ]);
@@ -105,7 +179,8 @@
     let overrideOwner;
     let connector;
     let slotNames = [];
-    let linearSlots = /* @__PURE__ */ new Set();
+    let guard;
+    const applied = /* @__PURE__ */ new Map();
     let polls = 0;
     const state = {
       version: VERSION,
@@ -116,7 +191,7 @@
       lastCheck: null,
       errors: []
     };
-    const status = () => ({ ...state, errors: [...state.errors], appliedManagers: [...state.appliedManagers] });
+    const status = () => ({ ...state, intercepted: guard?.intercepted() ?? 0, errors: [...state.errors], appliedManagers: [...state.appliedManagers] });
     const issue = (label, error) => {
       const message = `${label}: ${error?.message || String(error)}`;
       if (!state.errors.includes(message)) state.errors = [...state.errors.slice(-7), message];
@@ -145,7 +220,7 @@
       summary.textContent = `AdBlockee ${VERSION} \xB7 Sponsor UI: ${state.cosmetic ? "active" : "waiting"} \xB7 Audio controls: ${state.audio}`;
       root.append(summary);
       const details = host.document.createElement("p");
-      details.textContent = `${state.slotCount} music ad slots configured. ${state.errors.length ? "Some controls need attention; see console warnings." : "No compatibility errors reported."}`;
+      details.textContent = `${state.slotCount} music ad slots monitored. ${guard?.intercepted() ?? 0} ad slot interceptions this session. ${state.errors.length ? "Some controls need attention; see console warnings." : "No compatibility errors reported."}`;
       root.append(details);
       const link = host.document.createElement("a");
       link.textContent = "Project, updates and bug reports";
@@ -190,41 +265,37 @@
       ];
       const results = await Promise.all(tasks.map(async ([name, manager, method]) => {
         if (typeof manager?.[method] !== "function") return null;
+        if (applied.get(name) === manager && manager.enabled !== true) return name;
         const result = await attempt(name, () => manager[method]());
+        if (result.ok) applied.set(name, manager);
         return result.ok ? name : null;
       }));
       if (!active) return;
       state.appliedManagers = results.filter(Boolean);
       state.audio = state.appliedManagers.includes("audio") ? "applied" : "unavailable";
       const product = platform.ProductStateAPI?.productStateApi || platform.UserAPI?._product_state_service || platform.UserAPI?._product_state;
-      if (typeof product?.putOverridesValues === "function") {
+      if (product !== overrideOwner && typeof product?.putOverridesValues === "function") {
         const result = await attempt("ad preference", () => product.putOverridesValues({ pairs: { ads: "0" } }));
         if (result.ok) overrideOwner = product;
       }
       if (!active) return;
       const current = managers.inStreamApi?.adsCoreConnector || managers.audio?.inStreamApi?.adsCoreConnector;
       if (connector !== current) {
+        await guard?.dispose();
         connector = current;
         slotNames = [];
-        linearSlots = /* @__PURE__ */ new Set();
+        guard = connector ? createSlotGuard(connector, attempt, () => active) : void 0;
       }
-      if (connector?.enableSlot && connector?.clearSlot) {
+      if (connector?.clearSlot && guard) {
         if (!slotNames.length && typeof managers.config?.getAdsSlotConfig === "function") {
           const config = await attempt("music ad configuration", () => managers.config.getAdsSlotConfig());
           if (config.ok && config.value && typeof config.value === "object") {
             slotNames = Object.keys(config.value).filter((name) => MUSIC_SLOTS.has(name));
-            linearSlots = new Set(slotNames.filter((name) => config.value[name]?.linear === true));
           }
         }
         if (!active) return;
-        let configured = 0;
-        await Promise.all(slotNames.map(async (slot) => {
-          const disabled = await attempt(`disable ${slot}`, () => connector.enableSlot(slot, false));
-          if (!active || !disabled.ok) return;
-          configured++;
-          if (linearSlots.has(slot)) await attempt(`clear ${slot}`, () => connector.clearSlot(slot));
-        }));
-        state.slotCount = configured;
+        await Promise.all(slotNames.map((slot) => guard.watch(slot)));
+        state.slotCount = guard.count();
       }
       state.lastCheck = (/* @__PURE__ */ new Date()).toISOString();
     }
@@ -263,6 +334,7 @@
       menu?.deregister?.();
       removeCosmetics(host.document);
       if (running) await running;
+      await guard?.dispose();
       if (restore && overrideOwner?.delOverridesValues) {
         try {
           await overrideOwner.delOverridesValues({ keys: ["ads"] });

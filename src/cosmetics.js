@@ -38,10 +38,12 @@ export function installCosmetics(document, api) {
       display: none !important;
     }
     /* Spotify 1.3's extra-tall sponsored playlist variants only. */
-    .bXvkHCNOXigrpicAqmgd:is(.dvBGYlxl9sz3NBGlFf2T, .a9rFTjlXXl3MN3yB6J2z) {
+    .bXvkHCNOXigrpicAqmgd:is(.dvBGYlxl9sz3NBGlFf2T, .a9rFTjlXXl3MN3yB6J2z),
+    .main-entityHeader-container:is(.main-entityHeader-withSponsoredAdVideo, .main-entityHeader-withSponsoredAdVideoV3) {
       height: auto !important;
       min-height: 0 !important;
       max-height: none !important;
+      transition: none !important;
     }
     div:has(> .main-leaderboardComponent-container) {
       display: none !important;

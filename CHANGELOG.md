@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.0 — 2026-10-20
+
+- Remove the incorrect `enableSlot(slot, false)` calls: Spotify's native method always enables the slot.
+- Monitor music ad arrivals and clear queued/active ads immediately. Ignore discard events and coalesce duplicate callbacks to avoid feedback loops.
+- Override music ad request endpoints locally once per connection, without webpack module scanning or subscription spoofing.
+- Stop clearing empty ad slots on song changes and heartbeat checks. Apply the ad preference once per API instance and only disable managers again if they become enabled.
+- Support Spicetify's semantic sponsored-playlist header classes, including the V3 variant, so hidden promotions do not leave extra header height.
+- Shorten the README around installation and features, explicitly describe sponsored-playlist blocking, and remove the example screenshot.
+
 ## 2.0.1 — 2026-10-20
 
 - Make generated source paths independent of the build working directory, so local and CI builds produce the same file.
