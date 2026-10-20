@@ -1,4 +1,4 @@
-# Validation — 2.0.0
+# Validation — 2.0.1
 
 Test environment: Windows, Spotify 1.3.5.3058 and Spicetify 2.46.1, 20 October 2026.
 

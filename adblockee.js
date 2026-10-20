@@ -1,4 +1,4 @@
-/*! AdBlockee v2.0.0
+/*! AdBlockee v2.0.1
  * MIT License
  *
  * Copyright (c) 2026 LennonAmos
@@ -22,7 +22,7 @@
  * SOFTWARE.
  */
 (() => {
-  // outputs/AdBlockee-Spicetify/src/cosmetics.js
+  // src/cosmetics.js
   var STYLE_ID = "adblockee-ui";
   function localeText(api, key, fallback) {
     try {
@@ -82,8 +82,8 @@
     document.getElementById(STYLE_ID)?.remove();
   }
 
-  // outputs/AdBlockee-Spicetify/src/controller.js
-  var VERSION = "2.0.0";
+  // src/controller.js
+  var VERSION = "2.0.1";
   var MUSIC_SLOTS = /* @__PURE__ */ new Set([
     "stream",
     "preroll",
@@ -274,7 +274,7 @@
     return { version: VERSION, start, refresh, status, dispose };
   }
 
-  // outputs/AdBlockee-Spicetify/src/entry.js
+  // src/entry.js
   async function launch() {
     await window.AdBlockee?.dispose?.({ restore: false });
     window.AdBlockee = createController(window);

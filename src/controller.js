@@ -1,6 +1,6 @@
 import { installCosmetics, removeCosmetics } from "./cosmetics.js";
 
-const VERSION = "2.0.0";
+const VERSION = "2.0.1";
 const MUSIC_SLOTS = new Set([
   "stream", "preroll", "hpto", "leaderboard", "sponsored-playlist",
   "embedded-npv", "embedded-playlist", "stream-user-actions", "music-see-all",
