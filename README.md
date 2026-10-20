@@ -22,6 +22,32 @@ Already using another ad blocker? Remove it first so only AdBlockee handles ads.
 
 Works with Spicetify on **Windows, macOS and Linux**. Spotify updates can change ad behavior; if something slips through, [report it here](https://github.com/LennonAmos/AdBlockee-Spicetify/issues/new/choose).
 
+## Why choose AdBlockee?
+
+AdBlockee is a dedicated project for ad blocking and sponsored-playlist cleanup. Its own releases, bug reports and regression tests let us ship compatibility fixes independently. The aim is straightforward: keep protection working as Spotify changes, preserve normal playback and make problems easy to diagnose.
+
+Reliability is built into how it starts and handles failures:
+
+- **Flexible startup:** protection starts whether Spicetify's APIs load before or after the extension. It uses direct APIs without scanning and executing Spotify's bundle modules.
+- **Independent controls:** each ad-control request has a timeout. A failed or unresponsive API does not stop the other controls or the cosmetic fixes.
+- **Controlled refreshes:** overlapping refreshes share one operation. Empty ad slots are left alone, and successful setup is not repeated on every track change.
+- **Visible diagnostics:** the profile status panel shows the running version, monitored slots, interception count and compatibility warnings.
+- **Checks with each update:** 12 automated regression tests and GitHub CI cover startup, failures, ad events and cleanup. Live Windows checks are documented in [validation notes](VALIDATION.md).
+
+## Compared with Adblockify
+
+Both projects use native Spotify ad controls, ad-slot callbacks and local ad-request endpoint overrides. AdBlockee takes a different approach to startup, playback state and compatibility fixes:
+
+| Area | Adblockify | AdBlockee |
+| --- | --- | --- |
+| Startup | Waits for platform/bundle events and scans bundle modules | Checks API readiness directly, including late availability |
+| API failures | Several manager operations share one error-handling block | Per-operation timeouts and independent failure handling |
+| Sponsored playlists | The compared source lacks the current sponsor-label and sponsored-header fixes | Hides sponsor cards and labels, and collapses reserved header space using current Spicetify classes |
+| Local playback/account flags | Overrides local Premium/catalogue flags, ad-test playtime and several experimental settings | Changes the ad preference without Premium spoofing, test-playtime changes or audio/video preference changes |
+| Diagnostics | Console logging | Profile status panel plus console warnings |
+
+Comparison checked **20 October 2026** against [Adblockify's source at `5da6cf1`](https://github.com/rxri/spicetify-extensions/blob/5da6cf1bb723f9efd0177f5fa4f4673b9e0c0936/adblock/adblock.ts). These are implementation differences, not a measured ad-blocking success-rate comparison. Both depend on Spotify internals, and neither approach removes the account risk noted below.
+
 ## Manual install
 
 Download [`adblockee.js`](https://github.com/LennonAmos/AdBlockee-Spicetify/releases/latest/download/adblockee.js) to your [Spicetify Extensions folder](https://spicetify.app/docs/advanced-usage/extensions/), then run:
