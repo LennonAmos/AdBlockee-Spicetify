@@ -300,14 +300,14 @@ test("unknown native playback state never falls back to a stale ad in the wrappe
   await controller.dispose();
 });
 
-test("an ad finishing during startup does not cause the following song to be skipped", async () => {
+test("an ad finishing between detection and dispatch does not cause the following song to be skipped", async () => {
   const f = fixture();
   const native = f.api.Platform.PlayerAPI;
   native.state = playingAd("finishing-ad");
-  const disable = f.api.Platform.AdManagers.audio.disable;
-  f.api.Platform.AdManagers.audio.disable = async function() {
-    await disable.call(this);
-    native.state = { item: { uid: "following-song", uri: "spotify:track:following", metadata: {} } };
+  let reads = 0;
+  native.getState = function() {
+    if (++reads === 2) this.state = { item: { uid: "following-song", uri: "spotify:track:following", metadata: {} } };
+    return this.state;
   };
   const controller = createController(f.host);
   await controller.start();
