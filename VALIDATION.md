@@ -1,4 +1,11 @@
-# Validation — 2.1.1
+# Validation — 2.1.2
+
+Active-ad startup recovery, 21 October 2026:
+
+- Added a separate player-state check for an advertisement already playing at extension startup. It relies on Spotify's explicit `is_advertisement` metadata and item identity, not title text or disabled controls.
+- Inspected the installed client's native `PlayerAPI.skipToNext` interface. Recovery uses its awaited command after disabling ad-manager hooks, then checks that the identified ad leaves the player.
+- All 18 automated tests pass. New tests cover an active ad missing from slot inventory, ordinary tracks with advertising words, unknown native state with stale wrapper data, the ad ending during startup, duplicate events and a silently rejected skip.
+- A real mid-ad installation was not reproduced for this release. The regression fixtures establish dispatch and race handling, not that Spotify permits every active ad to be skipped. Native rejection is reported without repeated queue-advance commands.
 
 Homepage update, 21 October 2026:
 

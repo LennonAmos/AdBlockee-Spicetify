@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.2 — 2026-10-21
+
+- Detect an ad that is already playing when the extension loads, even if it no longer appears in ad-slot inventory, and request a native skip.
+- Recheck the exact ad identity immediately before dispatch, coalesce duplicate events and verify the ad actually leaves the player before reporting recovery.
+- Do not retry a rejected command into the following song. Spotify may still refuse to advance an unskippable ad that began before installation.
+- Add six regression cases for mid-ad installation, ordinary songs, stale state, startup transitions, duplicate events and rejected commands.
+
 ## 2.1.1 — 2026-10-21
 
 - Hide the homepage's native “You might like / Sponsored recommendation” shelf, including its artwork, title and controls.

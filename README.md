@@ -54,7 +54,7 @@ spicetify apply
 
 ## Development
 
-Requires Node.js 22+: `npm ci`, then `npm run check`. The project has 12 automated regression tests and GitHub CI. See [validation notes](VALIDATION.md) and the [changelog](CHANGELOG.md). For an installed-version check, open **Profile → AdBlockee status** in Spotify.
+Requires Node.js 22+: `npm ci`, then `npm run check`. The project has 18 automated regression tests and GitHub CI. See [validation notes](VALIDATION.md) and the [changelog](CHANGELOG.md). For an installed-version check, open **Profile → AdBlockee status** in Spotify.
 
 Maintained by **LennonAmos**, with Codex assistance. [MIT licensed](LICENSE). Not affiliated with Spotify or Spicetify. If it helps you, a star helps other Marketplace users find it.
 

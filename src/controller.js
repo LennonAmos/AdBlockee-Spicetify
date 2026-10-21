@@ -1,7 +1,8 @@
 import { installCosmetics, removeCosmetics } from "./cosmetics.js";
 import { createSlotGuard } from "./slots.js";
+import { createActiveAdRecovery } from "./active-ad.js";
 
-const VERSION = "2.1.1";
+const VERSION = "2.1.2";
 const MUSIC_SLOTS = new Set([
   "stream", "preroll", "hpto", "leaderboard", "sponsored-playlist",
   "embedded-npv", "embedded-playlist", "embedded-playlist-leavebehind", "stream-user-actions", "music-see-all",
@@ -30,7 +31,7 @@ export function createController(host) {
     errors: [],
   };
 
-  const status = () => ({ ...state, intercepted: guard?.intercepted() ?? 0, errors: [...state.errors], appliedManagers: [...state.appliedManagers] });
+  const status = () => ({ ...state, intercepted: guard?.intercepted() ?? 0, activeAdSkips: recovery.skipped(), errors: [...state.errors], appliedManagers: [...state.appliedManagers] });
   const issue = (label, error) => {
     const message = `${label}: ${error?.message || String(error)}`;
     if (!state.errors.includes(message)) state.errors = [...state.errors.slice(-7), message];
@@ -53,13 +54,19 @@ export function createController(host) {
     }
   }
 
+  const recovery = createActiveAdRecovery(() => host.Spicetify, attempt, () => active, host);
+
+  function onSongChange() {
+    refresh().then(() => recovery.check()).catch(error => issue("active ad detection", error));
+  }
+
   function showStatus() {
     const root = host.document.createElement("div");
     const summary = host.document.createElement("p");
     summary.textContent = `AdBlockee ${VERSION} · Sponsor UI: ${state.cosmetic ? "active" : "waiting"} · Audio controls: ${state.audio}`;
     root.append(summary);
     const details = host.document.createElement("p");
-    details.textContent = `${state.slotCount} music ad slots monitored. ${guard?.intercepted() ?? 0} ad slot interceptions this session. ${state.errors.length ? "Some controls need attention; see console warnings." : "No compatibility errors reported."}`;
+    details.textContent = `${state.slotCount} music ad slots monitored. ${guard?.intercepted() ?? 0} ad slot interceptions and ${recovery.skipped()} already-playing ads advanced this session. ${state.errors.length ? "Some controls need attention; see console warnings." : "No compatibility errors reported."}`;
     root.append(details);
     const link = host.document.createElement("a");
     link.textContent = "Project, updates and bug reports";
@@ -72,9 +79,9 @@ export function createController(host) {
 
   function connectPlayer(api) {
     if (api.Player?.addEventListener && player !== api.Player) {
-      player?.removeEventListener?.("songchange", refresh);
+      player?.removeEventListener?.("songchange", onSongChange);
       player = api.Player;
-      player.addEventListener("songchange", refresh);
+      player.addEventListener("songchange", onSongChange);
     }
     if (!menu && api.Menu?.Item && api.PopupModal?.display) {
       menu = new api.Menu.Item("AdBlockee status", false, showStatus);
@@ -118,6 +125,12 @@ export function createController(host) {
     if (!active) return;
     state.appliedManagers = results.filter(Boolean);
     state.audio = state.appliedManagers.includes("audio") ? "applied" : "unavailable";
+
+    // A late install misses the slot's original PLAY event. Check the actual
+    // player after disabling managers, whose skip hooks can otherwise consume
+    // the command. Recovery never relies on those managers' cached ad state.
+    await recovery.check();
+    if (!active) return;
 
     const product = platform.ProductStateAPI?.productStateApi
       || platform.UserAPI?._product_state_service || platform.UserAPI?._product_state;
@@ -183,11 +196,12 @@ export function createController(host) {
     host.clearInterval(poll);
     host.clearInterval(heartbeat);
     host.document.removeEventListener("visibilitychange", onVisible);
-    player?.removeEventListener?.("songchange", refresh);
+    player?.removeEventListener?.("songchange", onSongChange);
     menu?.deregister?.();
     removeCosmetics(host.document);
     if (running) await running;
     await guard?.dispose();
+    await recovery.dispose();
     // A pending initial request may have completed while disposal was waiting.
     if (restore && overrideOwner?.delOverridesValues) {
       try { await overrideOwner.delOverridesValues({ keys: ["ads"] }); }

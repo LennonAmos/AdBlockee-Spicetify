@@ -10,7 +10,7 @@ function fixture({ missing = false, failAudio = false, failConfig = false, hangA
   const nodes = new Map();
   const events = new Map();
   const listeners = new Map();
-  const calls = { overrides: [], restores: [], disabled: [], slots: [], endpoints: [], clear: [], warnings: [], menus: 0, cancelled: 0 };
+  const calls = { overrides: [], restores: [], disabled: [], slots: [], endpoints: [], clear: [], skips: [], warnings: [], menus: 0, cancelled: 0 };
   const slotEvents = new Map();
   const body = { append(node) { nodes.set(node.id, node); } };
   const document = {
@@ -53,7 +53,11 @@ function fixture({ missing = false, failAudio = false, failConfig = false, hangA
     } },
   };
   const api = {
-    Platform: { AdManagers: managers, UserAPI: { _product_state_service: product } },
+    Platform: { AdManagers: managers, UserAPI: { _product_state_service: product }, PlayerAPI: {
+      state: { item: { uid: "song-1", uri: "spotify:track:ordinary", metadata: {} } },
+      getState() { return this.state; },
+      async skipToNext() { calls.skips.push(this.state.item.uid); this.state = { item: { uid: "song-2", uri: "spotify:track:next", metadata: {} } }; },
+    } },
     Locale: { get: key => key },
     Player: {
       addEventListener: (name, callback) => listeners.set(name, callback),
@@ -180,7 +184,7 @@ test("rapid refresh requests share one operation instead of stacking API calls",
   const f = fixture();
   const controller = createController(f.host);
   const results = await Promise.all([controller.start(), controller.refresh(), controller.refresh()]);
-  assert.ok(results.every(result => result.version === "2.1.1"));
+  assert.ok(results.every(result => result.version === "2.1.2"));
   assert.equal(f.calls.overrides.length, 1);
   assert.equal(f.nodes.size, 1);
   const snapshot = controller.status();
@@ -255,6 +259,106 @@ test("a rejected endpoint override is retried without duplicating slot subscript
   assert.equal(f.slotEvents.size, 2);
   await controller.dispose();
   assert.equal(f.calls.cancelled, 2);
+});
+
+const playingAd = uid => ({ item: { uid, uri: `spotify:ad:${uid}`, metadata: { is_advertisement: "true", ad_id: uid } } });
+
+test("a mid-ad installation advances the already-playing ad even when slot inventory is empty", async () => {
+  const f = fixture();
+  const native = f.api.Platform.PlayerAPI;
+  native.state = playingAd("startup-ad");
+  const controller = createController(f.host);
+  await controller.start();
+  assert.deepEqual(f.calls.skips, ["startup-ad"]);
+  assert.equal(native.state.item.uid, "song-2");
+  assert.equal(controller.status().activeAdSkips, 1);
+  await controller.refresh();
+  await f.advance(30000);
+  assert.deepEqual(f.calls.skips, ["startup-ad"]);
+  await controller.dispose();
+});
+
+test("ordinary tracks with advertising words in their metadata are never skipped", async () => {
+  const f = fixture();
+  const native = f.api.Platform.PlayerAPI;
+  native.state.item.metadata = { title: "Advertisement", artist_name: "Sponsored", is_advertisement: "false" };
+  const controller = createController(f.host);
+  await controller.start();
+  assert.deepEqual(f.calls.skips, []);
+  assert.equal(native.state.item.uid, "song-1");
+  await controller.dispose();
+});
+
+test("unknown native playback state never falls back to a stale ad in the wrapper", async () => {
+  const f = fixture();
+  f.api.Platform.PlayerAPI.state = null;
+  f.api.Player.data = playingAd("stale-ad");
+  const controller = createController(f.host);
+  await controller.start();
+  assert.deepEqual(f.calls.skips, []);
+  assert.equal(controller.status().activeAdSkips, 0);
+  await controller.dispose();
+});
+
+test("an ad finishing during startup does not cause the following song to be skipped", async () => {
+  const f = fixture();
+  const native = f.api.Platform.PlayerAPI;
+  native.state = playingAd("finishing-ad");
+  const disable = f.api.Platform.AdManagers.audio.disable;
+  f.api.Platform.AdManagers.audio.disable = async function() {
+    await disable.call(this);
+    native.state = { item: { uid: "following-song", uri: "spotify:track:following", metadata: {} } };
+  };
+  const controller = createController(f.host);
+  await controller.start();
+  assert.deepEqual(f.calls.skips, []);
+  assert.equal(native.state.item.uid, "following-song");
+  await controller.dispose();
+});
+
+test("duplicate playback events and refreshes share one active-ad skip", async () => {
+  const f = fixture();
+  const native = f.api.Platform.PlayerAPI;
+  native.state = playingAd("slow-ad");
+  let release;
+  native.skipToNext = async function() {
+    f.calls.skips.push(this.state.item.uid);
+    await new Promise(resolve => { release = resolve; });
+    this.state = { item: { uid: "following-song", uri: "spotify:track:following", metadata: {} } };
+  };
+  const controller = createController(f.host);
+  const started = controller.start();
+  await new Promise(setImmediate);
+  f.listeners.get("songchange")();
+  const refreshed = controller.refresh();
+  assert.deepEqual(f.calls.skips, ["slow-ad"]);
+  release();
+  await Promise.all([started, refreshed]);
+  await f.advance(1);
+  assert.deepEqual(f.calls.skips, ["slow-ad"]);
+  assert.equal(native.state.item.uid, "following-song");
+  await controller.dispose();
+});
+
+test("a silently rejected active-ad command reports failure and is never retried into the next song", async () => {
+  const f = fixture();
+  const native = f.api.Platform.PlayerAPI;
+  native.state = playingAd("unskippable-ad");
+  native.skipToNext = async function() { f.calls.skips.push(this.state.item.uid); };
+  const controller = createController(f.host);
+  const started = controller.start();
+  await f.advance(1501);
+  const result = await started;
+  assert.match(result.errors.join(" "), /may be unskippable/);
+  assert.equal(result.activeAdSkips, 0);
+  await controller.refresh();
+  assert.deepEqual(f.calls.skips, ["unskippable-ad"]);
+  native.state = { item: { uid: "following-song", metadata: {} } };
+  f.listeners.get("songchange")();
+  await f.advance(1);
+  assert.deepEqual(f.calls.skips, ["unskippable-ad"]);
+  await controller.dispose();
+  assert.equal(f.timers.size, 0);
 });
 
 test("the Marketplace manifest has one extension, valid resources and a square PNG preview", () => {
