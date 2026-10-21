@@ -1,4 +1,12 @@
-# Validation — 2.1.0
+# Validation — 2.1.1
+
+Homepage update, 21 October 2026:
+
+- Identified Spotify's `HomeNativeAdsShelf` component in the installed client. Its advertising section has separate markers from the older `home-ad-card` and `home-ads-container` elements.
+- Browser-rendered regression fixtures use the real native-shelf markers. All three advertising variants were hidden, including a translated-label variant, and an ordinary “You might like” shelf stayed visible at the top with no reserved advertising space.
+- All 12 automated tests, bundle generation and JavaScript syntax checks passed. This patch changes cosmetic filtering only; Spotify's audio controls are unchanged.
+
+Previous live checks for 2.1.0:
 
 Test environment: Windows, Spotify 1.3.5.3058 and Spicetify 2.46.1, 20 October 2026.
 

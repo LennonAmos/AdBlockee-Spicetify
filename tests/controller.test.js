@@ -180,7 +180,7 @@ test("rapid refresh requests share one operation instead of stacking API calls",
   const f = fixture();
   const controller = createController(f.host);
   const results = await Promise.all([controller.start(), controller.refresh(), controller.refresh()]);
-  assert.ok(results.every(result => result.version === "2.1.0"));
+  assert.ok(results.every(result => result.version === "2.1.1"));
   assert.equal(f.calls.overrides.length, 1);
   assert.equal(f.nodes.size, 1);
   const snapshot = controller.status();

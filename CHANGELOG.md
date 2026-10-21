@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.1 — 2026-10-21
+
+- Hide the homepage's native “You might like / Sponsored recommendation” shelf, including its artwork, title and controls.
+- Target the complete advertising shelf so its heading and reserved space disappear too. Ordinary recommendation shelves remain visible.
+
 ## 2.1.0 — 2026-10-20
 
 - Remove the incorrect `enableSlot(slot, false)` calls: Spotify's native method always enables the slot.

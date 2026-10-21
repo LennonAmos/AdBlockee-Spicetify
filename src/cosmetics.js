@@ -15,6 +15,12 @@ export function installCosmetics(document, api) {
   const advertisement = JSON.stringify(localeText(api, "ad-formats.advertisement", "Advertisement"));
   const limited = JSON.stringify(localeText(api, "ad-formats.limited-ads-more-info", "Limited ads. More information"));
   const rules = `
+    /* HomeNativeAdsShelf uses neither home-ad-card nor home-ads-container.
+       Hide the entire shelf, including its heading and reserved layout space.
+       These markers are independent of the recommendation's title/language. */
+    main section.VgSsqvSSHowr6JjIJ6lF,
+    main section[data-shelf-collapsable]:has(.nP8cc31SRmgpKK0rPWkN),
+    main section:has([data-testid="sponsored-recommendation-modal-trigger"]),
     :is(
       [data-testid="scroll-card-ad"],
       [aria-label="npv-sponsorship-title"],

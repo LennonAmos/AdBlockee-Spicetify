@@ -1,7 +1,7 @@
 import { installCosmetics, removeCosmetics } from "./cosmetics.js";
 import { createSlotGuard } from "./slots.js";
 
-const VERSION = "2.1.0";
+const VERSION = "2.1.1";
 const MUSIC_SLOTS = new Set([
   "stream", "preroll", "hpto", "leaderboard", "sponsored-playlist",
   "embedded-npv", "embedded-playlist", "embedded-playlist-leavebehind", "stream-user-actions", "music-see-all",

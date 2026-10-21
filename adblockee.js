@@ -1,4 +1,4 @@
-/*! AdBlockee v2.1.0
+/*! AdBlockee v2.1.1
  * MIT License
  *
  * Copyright (c) 2026 LennonAmos
@@ -37,6 +37,12 @@
     const advertisement = JSON.stringify(localeText(api, "ad-formats.advertisement", "Advertisement"));
     const limited = JSON.stringify(localeText(api, "ad-formats.limited-ads-more-info", "Limited ads. More information"));
     const rules = `
+    /* HomeNativeAdsShelf uses neither home-ad-card nor home-ads-container.
+       Hide the entire shelf, including its heading and reserved layout space.
+       These markers are independent of the recommendation's title/language. */
+    main section.VgSsqvSSHowr6JjIJ6lF,
+    main section[data-shelf-collapsable]:has(.nP8cc31SRmgpKK0rPWkN),
+    main section:has([data-testid="sponsored-recommendation-modal-trigger"]),
     :is(
       [data-testid="scroll-card-ad"],
       [aria-label="npv-sponsorship-title"],
@@ -156,7 +162,7 @@
   }
 
   // src/controller.js
-  var VERSION = "2.1.0";
+  var VERSION = "2.1.1";
   var MUSIC_SLOTS = /* @__PURE__ */ new Set([
     "stream",
     "preroll",
