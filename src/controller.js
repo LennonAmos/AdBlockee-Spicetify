@@ -2,7 +2,7 @@ import { installCosmetics, removeCosmetics } from "./cosmetics.js";
 import { createSlotGuard } from "./slots.js";
 import { createActiveAdRecovery } from "./active-ad.js";
 
-const VERSION = "2.1.2";
+const VERSION = "2.1.3";
 const MUSIC_SLOTS = new Set([
   "stream", "preroll", "hpto", "leaderboard", "sponsored-playlist",
   "embedded-npv", "embedded-playlist", "embedded-playlist-leavebehind", "stream-user-actions", "music-see-all",
@@ -13,8 +13,10 @@ export function createController(host) {
   let running = null;
   let poll;
   let heartbeat;
+  let adPoll;
   let menu;
   let player;
+  let nativeEvents;
   let overrideOwner;
   let connector;
   let slotNames = [];
@@ -31,7 +33,7 @@ export function createController(host) {
     errors: [],
   };
 
-  const status = () => ({ ...state, intercepted: guard?.intercepted() ?? 0, activeAdSkips: recovery.skipped(), errors: [...state.errors], appliedManagers: [...state.appliedManagers] });
+  const status = () => ({ ...state, intercepted: guard?.intercepted() ?? 0, activeAdSkips: recovery.skipped(), silencedBreaks: recovery.silenced(), errors: [...state.errors], appliedManagers: [...state.appliedManagers] });
   const issue = (label, error) => {
     const message = `${label}: ${error?.message || String(error)}`;
     if (!state.errors.includes(message)) state.errors = [...state.errors.slice(-7), message];
@@ -60,13 +62,17 @@ export function createController(host) {
     refresh().then(() => recovery.check()).catch(error => issue("active ad detection", error));
   }
 
+  function onPlayerUpdate() {
+    recovery.check().catch(error => issue("active ad detection", error));
+  }
+
   function showStatus() {
     const root = host.document.createElement("div");
     const summary = host.document.createElement("p");
     summary.textContent = `AdBlockee ${VERSION} · Sponsor UI: ${state.cosmetic ? "active" : "waiting"} · Audio controls: ${state.audio}`;
     root.append(summary);
     const details = host.document.createElement("p");
-    details.textContent = `${state.slotCount} music ad slots monitored. ${guard?.intercepted() ?? 0} ad slot interceptions and ${recovery.skipped()} already-playing ads advanced this session. ${state.errors.length ? "Some controls need attention; see console warnings." : "No compatibility errors reported."}`;
+    details.textContent = `${state.slotCount} music ad slots monitored. ${guard?.intercepted() ?? 0} ad slot interceptions, ${recovery.skipped()} active ads advanced and ${recovery.silenced()} ad breaks silenced this session. ${state.errors.length ? "Some controls need attention; see console warnings." : "No compatibility errors reported."}`;
     root.append(details);
     const link = host.document.createElement("a");
     link.textContent = "Project, updates and bug reports";
@@ -78,6 +84,12 @@ export function createController(host) {
   }
 
   function connectPlayer(api) {
+    const currentEvents = api.Platform?.PlayerAPI?.getEvents?.();
+    if (currentEvents !== nativeEvents) {
+      nativeEvents?.removeListener?.("update", onPlayerUpdate);
+      nativeEvents = currentEvents;
+      nativeEvents?.addListener?.("update", onPlayerUpdate);
+    }
     if (api.Player?.addEventListener && player !== api.Player) {
       player?.removeEventListener?.("songchange", onSongChange);
       player = api.Player;
@@ -184,6 +196,9 @@ export function createController(host) {
     }, 250);
     // A slow fallback also recovers from APIs becoming ready after startup.
     heartbeat = host.setInterval(refresh, 30000);
+    // Cached player state only: a fallback for clients that miss ad songchange
+    // events. This never repeatedly disables managers or advances the queue.
+    adPoll = host.setInterval(onPlayerUpdate, 500);
     return refresh();
   }
 
@@ -195,8 +210,10 @@ export function createController(host) {
     active = false;
     host.clearInterval(poll);
     host.clearInterval(heartbeat);
+    host.clearInterval(adPoll);
     host.document.removeEventListener("visibilitychange", onVisible);
     player?.removeEventListener?.("songchange", onSongChange);
+    nativeEvents?.removeListener?.("update", onPlayerUpdate);
     menu?.deregister?.();
     removeCosmetics(host.document);
     if (running) await running;

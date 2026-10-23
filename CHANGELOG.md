@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.3 — 2026-10-23
+
+- Recognize native `type: "ad"` items and `spotify:ad:` URIs even when the older advertisement metadata flag is absent.
+- Listen to native player updates and check cached player state every 500 ms as a fallback for missing song-change events. Skip attempts remain limited to one per identified ad.
+- Silence detected music ads while attempting recovery. If Spotify refuses to skip, keep the break silent and restore the previous volume when music returns. Respect pre-existing mute and nonzero volume changes made by the listener.
+- Handle consecutive ads, unknown transition state, delayed volume-cache updates, stopped playback and extension replacement without leaving the next song muted.
+- Reapply the local ad-request endpoint when an ad arrives while clearing the slot immediately. Ignore discard callbacks to prevent feedback loops.
+- Add 15 regression cases. Explicit podcast ads and audio/video preferences remain unchanged.
+
 ## 2.1.2 — 2026-10-21
 
 - Detect an ad that is already playing when the extension loads, even if it no longer appears in ad-slot inventory, and request a native skip.

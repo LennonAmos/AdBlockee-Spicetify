@@ -10,7 +10,12 @@ function fixture({ missing = false, failAudio = false, failConfig = false, hangA
   const nodes = new Map();
   const events = new Map();
   const listeners = new Map();
-  const calls = { overrides: [], restores: [], disabled: [], slots: [], endpoints: [], clear: [], skips: [], warnings: [], menus: 0, cancelled: 0 };
+  const nativeListeners = new Map();
+  const nativeEvents = {
+    addListener: (name, callback) => nativeListeners.set(name, callback),
+    removeListener: (name, callback) => { if (nativeListeners.get(name) === callback) nativeListeners.delete(name); },
+  };
+  const calls = { overrides: [], restores: [], disabled: [], slots: [], endpoints: [], clear: [], skips: [], volumes: [], warnings: [], menus: 0, cancelled: 0 };
   const slotEvents = new Map();
   const body = { append(node) { nodes.set(node.id, node); } };
   const document = {
@@ -56,10 +61,14 @@ function fixture({ missing = false, failAudio = false, failConfig = false, hangA
     Platform: { AdManagers: managers, UserAPI: { _product_state_service: product }, PlayerAPI: {
       state: { item: { uid: "song-1", uri: "spotify:track:ordinary", metadata: {} } },
       getState() { return this.state; },
+      getEvents() { return nativeEvents; },
       async skipToNext() { calls.skips.push(this.state.item.uid); this.state = { item: { uid: "song-2", uri: "spotify:track:next", metadata: {} } }; },
     } },
     Locale: { get: key => key },
     Player: {
+      volume: 0.7,
+      getVolume() { return this.volume; },
+      async setVolume(volume) { calls.volumes.push(volume); this.volume = volume; },
       addEventListener: (name, callback) => listeners.set(name, callback),
       removeEventListener: name => listeners.delete(name),
     },
@@ -93,7 +102,7 @@ function fixture({ missing = false, failAudio = false, failConfig = false, hangA
     }
     throw Error("Too many callbacks");
   }
-  return { host, api, calls, nodes, events, listeners, timers, advance, slotEvents, connector };
+  return { host, api, calls, nodes, events, listeners, nativeListeners, timers, advance, slotEvents, connector };
 }
 
 test("disables music ad controls without changing subscription/catalogue properties", async () => {
@@ -115,6 +124,7 @@ test("disables music ad controls without changing subscription/catalogue propert
   assert.equal(f.nodes.size, 0);
   assert.equal(f.timers.size, 0);
   assert.equal(f.listeners.size, 0);
+  assert.equal(f.nativeListeners.size, 0);
   assert.equal(f.events.size, 0);
   assert.equal(f.calls.menus, 0);
   assert.equal(f.slotEvents.size, 0);
@@ -184,7 +194,7 @@ test("rapid refresh requests share one operation instead of stacking API calls",
   const f = fixture();
   const controller = createController(f.host);
   const results = await Promise.all([controller.start(), controller.refresh(), controller.refresh()]);
-  assert.ok(results.every(result => result.version === "2.1.2"));
+  assert.ok(results.every(result => result.version === "2.1.3"));
   assert.equal(f.calls.overrides.length, 1);
   assert.equal(f.nodes.size, 1);
   const snapshot = controller.status();
@@ -358,6 +368,216 @@ test("a silently rejected active-ad command reports failure and is never retried
   await f.advance(1);
   assert.deepEqual(f.calls.skips, ["unskippable-ad"]);
   await controller.dispose();
+  assert.equal(f.timers.size, 0);
+});
+
+test("native ad items without the legacy advertisement flag are silenced and recovered", async () => {
+  const f = fixture();
+  f.api.Platform.PlayerAPI.state = { item: { type: "ad", uid: "native-ad", id: "creative", metadata: {} } };
+  const controller = createController(f.host);
+  await controller.start();
+  assert.deepEqual(f.calls.skips, ["native-ad"]);
+  assert.deepEqual(f.calls.volumes, [0, 0.7]);
+  assert.equal(controller.status().silencedBreaks, 1);
+  await controller.dispose();
+});
+
+test("the native ad URI is sufficient even without a normalized type or metadata flag", async () => {
+  const f = fixture();
+  f.api.Platform.PlayerAPI.state = { item: { uid: "uri-ad", uri: "spotify:ad:creative" } };
+  const controller = createController(f.host);
+  await controller.start();
+  assert.deepEqual(f.calls.skips, ["uri-ad"]);
+  assert.deepEqual(f.calls.volumes, [0, 0.7]);
+  await controller.dispose();
+});
+
+test("an unskippable ad stays silent and the following song regains the exact volume", async () => {
+  const f = fixture();
+  const native = f.api.Platform.PlayerAPI;
+  const controller = createController(f.host);
+  await controller.start();
+  native.skipToNext = async function() { f.calls.skips.push(this.state.item.uid); throw Error("ad_disallow"); };
+  native.state = playingAd("locked-ad");
+  f.nativeListeners.get("update")();
+  await f.advance(10);
+  assert.equal(f.api.Player.volume, 0);
+  await f.advance(2000);
+  assert.deepEqual(f.calls.skips, ["locked-ad"]);
+  native.state = { item: { type: "track", uid: "music", metadata: {} } };
+  f.nativeListeners.get("update")();
+  await f.advance(10);
+  assert.equal(f.api.Player.volume, 0.7);
+  assert.deepEqual(f.calls.volumes, [0, 0.7]);
+  await controller.dispose();
+});
+
+test("the cached-state fallback detects an ad when neither playback event arrives", async () => {
+  const f = fixture();
+  const controller = createController(f.host);
+  await controller.start();
+  f.api.Platform.PlayerAPI.state = playingAd("missed-event");
+  await f.advance(501);
+  assert.deepEqual(f.calls.skips, ["missed-event"]);
+  assert.deepEqual(f.calls.volumes, [0, 0.7]);
+  await controller.dispose();
+});
+
+test("back-to-back unskippable ads and unknown transition state do not unmute the break", async () => {
+  const f = fixture();
+  const controller = createController(f.host);
+  await controller.start();
+  const native = f.api.Platform.PlayerAPI;
+  native.skipToNext = async () => { throw Error("ad_disallow"); };
+  native.state = playingAd("first-ad");
+  await controller.refresh();
+  native.state = null;
+  await f.advance(501);
+  native.state = playingAd("second-ad");
+  await f.advance(501);
+  assert.deepEqual(f.calls.volumes, [0]);
+  native.state = { item: { type: "track", uid: "music", metadata: {} } };
+  await f.advance(501);
+  assert.deepEqual(f.calls.volumes, [0, 0.7]);
+  await controller.dispose();
+});
+
+test("a user's volume change during a silenced break is retained", async () => {
+  const f = fixture();
+  const controller = createController(f.host);
+  await controller.start();
+  const native = f.api.Platform.PlayerAPI;
+  native.skipToNext = async () => { throw Error("ad_disallow"); };
+  native.state = playingAd("manual-volume");
+  await controller.refresh();
+  f.api.Player.volume = 0.3;
+  await f.advance(1001);
+  native.state = { item: { uid: "music", metadata: {} } };
+  await f.advance(501);
+  assert.deepEqual(f.calls.volumes, [0]);
+  assert.equal(f.api.Player.volume, 0.3);
+  await controller.dispose();
+});
+
+test("a volume already at zero is never raised when the advert ends", async () => {
+  const f = fixture();
+  f.api.Player.volume = 0;
+  f.api.Platform.PlayerAPI.state = playingAd("already-muted");
+  const controller = createController(f.host);
+  await controller.start();
+  assert.deepEqual(f.calls.volumes, []);
+  await controller.dispose();
+});
+
+test("disabling the extension during a silenced ad restores volume and removes monitors", async () => {
+  const f = fixture();
+  f.api.Platform.PlayerAPI.state = playingAd("dispose-muted");
+  f.api.Platform.PlayerAPI.skipToNext = async () => { throw Error("ad_disallow"); };
+  const controller = createController(f.host);
+  await controller.start();
+  assert.equal(f.api.Player.volume, 0);
+  await controller.dispose();
+  assert.equal(f.api.Player.volume, 0.7);
+  assert.equal(f.nativeListeners.size, 0);
+  assert.equal(f.timers.size, 0);
+});
+
+test("delayed Spotify volume-cache updates cannot discard the pending restore", async () => {
+  const f = fixture();
+  f.api.Platform.PlayerAPI.state = playingAd("delayed-cache");
+  // The native wrapper resolves before its volume cache updates. Keep that
+  // cache stale here: restoration must still enqueue the original value.
+  f.api.Player.setVolume = async volume => { f.calls.volumes.push(volume); };
+  const controller = createController(f.host);
+  await controller.start();
+  assert.deepEqual(f.calls.volumes, [0, 0.7]);
+  await controller.dispose();
+});
+
+test("stopping playback without a current item restores a silenced break", async () => {
+  const f = fixture();
+  f.api.Platform.PlayerAPI.state = playingAd("stopped-ad");
+  f.api.Platform.PlayerAPI.skipToNext = async () => { throw Error("ad_disallow"); };
+  const controller = createController(f.host);
+  await controller.start();
+  f.api.Platform.PlayerAPI.state = { hasContext: false, item: null };
+  await f.advance(501);
+  assert.deepEqual(f.calls.volumes, [0, 0.7]);
+  await controller.dispose();
+});
+
+test("disposal while a mute is pending restores volume without dispatching a skip", async () => {
+  const f = fixture();
+  f.api.Platform.PlayerAPI.state = playingAd("pending-mute");
+  let release;
+  f.api.Player.setVolume = async function(volume) {
+    f.calls.volumes.push(volume);
+    if (volume === 0) await new Promise(resolve => { release = resolve; });
+    this.volume = volume;
+  };
+  const controller = createController(f.host);
+  const started = controller.start();
+  await new Promise(setImmediate);
+  const disposed = controller.dispose();
+  release();
+  await Promise.all([started, disposed]);
+  assert.deepEqual(f.calls.volumes, [0, 0.7]);
+  assert.deepEqual(f.calls.skips, []);
+  assert.equal(f.api.Player.volume, 0.7);
+  assert.equal(f.timers.size, 0);
+});
+
+test("a failed volume restore is retried while music plays", async () => {
+  const f = fixture();
+  f.api.Platform.PlayerAPI.state = playingAd("restore-retry");
+  let failRestore = true;
+  f.api.Player.setVolume = async function(volume) {
+    f.calls.volumes.push(volume);
+    if (volume !== 0 && failRestore) throw Error("volume temporarily unavailable");
+    this.volume = volume;
+  };
+  const controller = createController(f.host);
+  await controller.start();
+  assert.equal(f.api.Player.volume, 0);
+  failRestore = false;
+  await f.advance(501);
+  assert.equal(f.api.Player.volume, 0.7);
+  await controller.dispose();
+});
+
+test("explicit podcast ads are left to podcast playback", async () => {
+  const f = fixture();
+  f.api.Platform.PlayerAPI.state = { item: { type: "ad", uid: "podcast-ad", isPodcastAd: true, metadata: { is_advertisement: "true" } } };
+  const controller = createController(f.host);
+  await controller.start();
+  assert.deepEqual(f.calls.skips, []);
+  assert.deepEqual(f.calls.volumes, []);
+  await controller.dispose();
+});
+
+test("an arriving ad reapplies an endpoint reset without feedback on discard", async () => {
+  const f = fixture();
+  const controller = createController(f.host);
+  await controller.start();
+  const before = f.calls.endpoints.length;
+  f.slotEvents.get("stream")({ adSlotEvent: { eventType: 0, ad: { adId: "reset-endpoint" } } });
+  await f.advance(1);
+  assert.equal(f.calls.endpoints.length, before + 1);
+  assert.deepEqual(f.calls.clear, ["stream"]);
+  await controller.dispose();
+});
+
+test("an endpoint override that stalls cannot delay clearing an arriving ad", async () => {
+  const f = fixture();
+  const controller = createController(f.host);
+  await controller.start();
+  f.connector.updateAdServerEndpoint = async () => new Promise(() => {});
+  f.slotEvents.get("stream")({ adSlotEvent: { eventType: 0, ad: { adId: "slow-endpoint" } } });
+  await f.advance(1);
+  assert.deepEqual(f.calls.clear, ["stream"]);
+  const disposed = controller.dispose();
+  await f.advance(4001);
+  await disposed;
   assert.equal(f.timers.size, 0);
 });
 

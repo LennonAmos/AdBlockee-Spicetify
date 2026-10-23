@@ -1,4 +1,4 @@
-/*! AdBlockee v2.1.2
+/*! AdBlockee v2.1.3
  * MIT License
  *
  * Copyright (c) 2026 LennonAmos
@@ -109,10 +109,17 @@
       });
       entry.endpoint = result.ok;
     }
-    function clear(slot) {
+    function clear(slot, entry, refreshEndpoint = false) {
       if (stopped || !isActive()) return Promise.resolve();
       if (clearing.has(slot)) return clearing.get(slot);
-      const pending = attempt(`clear ${slot}`, () => connector.clearSlot(slot)).then((result) => {
+      const pending = (async () => {
+        const cleared = attempt(`clear ${slot}`, () => connector.clearSlot(slot));
+        if (refreshEndpoint) {
+          entry.endpoint = false;
+          await setEndpoint(slot, entry);
+        }
+        return cleared;
+      })().then((result) => {
         if (result.ok) intercepted++;
       }).finally(() => clearing.delete(slot));
       clearing.set(slot, pending);
@@ -133,7 +140,7 @@
       }
       const subscription = await attempt(`watch ${slot}`, () => connector.subscribeToSlot(slot, (message) => {
         const event = message?.adSlotEvent;
-        if (event?.ad && (event.eventType === 0 || event.eventType === 1)) clear(slot);
+        if (event?.ad && (event.eventType === 0 || event.eventType === 1)) clear(slot, entry, true);
       }));
       if (subscription.ok) entry.subscription = subscription.value;
       if (stopped || !isActive()) {
@@ -161,19 +168,96 @@
     return { watch, dispose, count: () => [...watched.values()].filter((e) => e.ready).length, intercepted: () => intercepted };
   }
 
+  // src/ad-silencer.js
+  function createAdSilencer(getApi, currentAdvertisement2, attempt) {
+    let saved;
+    let running;
+    let again = false;
+    let stopped = false;
+    let userOverride = false;
+    let count = 0;
+    async function restore() {
+      const previous = saved;
+      if (!previous) return;
+      const volume = previous.player.getVolume();
+      if (volume !== 0 && (previous.observed || volume !== previous.volume)) {
+        saved = void 0;
+        return;
+      }
+      const result = await attempt("restore music volume", () => previous.player.setVolume(previous.volume));
+      if (result.ok) saved = void 0;
+    }
+    async function update() {
+      const api = getApi();
+      const ad = currentAdvertisement2(api);
+      if (ad === void 0) return;
+      if (!ad) {
+        userOverride = false;
+        await restore();
+        return;
+      }
+      if (saved) {
+        const volume2 = saved.player.getVolume();
+        if (volume2 === 0) saved.observed = true;
+        else if (saved.observed || volume2 !== saved.volume) {
+          saved = void 0;
+          userOverride = true;
+        }
+        return;
+      }
+      const player = api?.Player;
+      if (userOverride || typeof player?.getVolume !== "function" || typeof player?.setVolume !== "function") return;
+      const volume = player.getVolume();
+      if (!Number.isFinite(volume) || volume <= 0 || volume > 1) return;
+      await attempt("silence active ad", async () => {
+        if (stopped || currentAdvertisement2(getApi())?.id !== ad.id) return;
+        saved = { player, volume, observed: false };
+        await player.setVolume(0);
+        if (saved && player.getVolume() === 0) saved.observed = true;
+        count++;
+        if (currentAdvertisement2(getApi()) === null) await restore();
+      });
+    }
+    function sync() {
+      if (stopped) return Promise.resolve();
+      if (running) {
+        again = true;
+        return running;
+      }
+      running = (async () => {
+        do {
+          again = false;
+          await update();
+        } while (again && !stopped);
+      })().finally(() => {
+        running = void 0;
+      });
+      return running;
+    }
+    async function dispose() {
+      stopped = true;
+      if (running) await running;
+      await restore();
+    }
+    return { sync, dispose, count: () => count };
+  }
+
   // src/active-ad.js
   function currentAdvertisement(api) {
     const native = api?.Platform?.PlayerAPI;
+    let state;
     let item;
     try {
-      item = typeof native?.getState === "function" ? native.getState()?.item : api?.Player?.data?.item;
+      state = typeof native?.getState === "function" ? native.getState() : api?.Player?.data;
+      item = state?.item;
     } catch {
       return void 0;
     }
-    if (!item) return void 0;
+    if (!item) return state?.hasContext === false ? null : void 0;
     const metadata = item?.metadata;
-    if (metadata?.is_advertisement !== "true" && metadata?.is_advertisement !== true) return null;
-    const id = [item.uid, metadata.ad_id, item.uri].filter(Boolean).join("|");
+    if (item.isPodcastAd === true || metadata?.is_podcast_advertisement === "true" || metadata?.is_podcast_advertisement === true) return null;
+    if (item.type !== "ad" && !/^spotify:ad:[^:]+$/.test(item.uri ?? "") && metadata?.is_advertisement !== "true" && metadata?.is_advertisement !== true) return null;
+    const id = [item.uid, item.id, metadata?.ad_id, item.uri].filter(Boolean).join("|");
     return id ? { id, native: typeof native?.skipToNext === "function" ? native : api?.Player?.origin } : void 0;
   }
   function createActiveAdRecovery(getApi, attempt, isActive, host) {
@@ -181,8 +265,11 @@
     const pending = /* @__PURE__ */ new Map();
     let stopped = false;
     let skipped = 0;
-    function check() {
+    const silencer = createAdSilencer(getApi, currentAdvertisement, attempt);
+    async function check() {
       if (stopped || !isActive()) return Promise.resolve();
+      await silencer.sync();
+      if (stopped || !isActive()) return;
       const ad = currentAdvertisement(getApi());
       if (!ad || typeof ad.native?.skipToNext !== "function") return Promise.resolve();
       if (pending.has(ad.id)) return pending.get(ad.id);
@@ -202,20 +289,24 @@
         throw Error("Spotify did not advance the active ad; it may be unskippable");
       }).then((result) => {
         if (result.ok && result.value === true) skipped++;
-      }).finally(() => pending.delete(ad.id));
+      }).finally(async () => {
+        pending.delete(ad.id);
+        if (!stopped && isActive()) await silencer.sync();
+      });
       pending.set(ad.id, request);
       return request;
     }
     async function dispose() {
       stopped = true;
       await Promise.all([...pending.values()]);
+      await silencer.dispose();
       handled.clear();
     }
-    return { check, dispose, skipped: () => skipped };
+    return { check, dispose, skipped: () => skipped, silenced: silencer.count };
   }
 
   // src/controller.js
-  var VERSION = "2.1.2";
+  var VERSION = "2.1.3";
   var MUSIC_SLOTS = /* @__PURE__ */ new Set([
     "stream",
     "preroll",
@@ -233,8 +324,10 @@
     let running = null;
     let poll;
     let heartbeat;
+    let adPoll;
     let menu;
     let player;
+    let nativeEvents;
     let overrideOwner;
     let connector;
     let slotNames = [];
@@ -250,7 +343,7 @@
       lastCheck: null,
       errors: []
     };
-    const status = () => ({ ...state, intercepted: guard?.intercepted() ?? 0, activeAdSkips: recovery.skipped(), errors: [...state.errors], appliedManagers: [...state.appliedManagers] });
+    const status = () => ({ ...state, intercepted: guard?.intercepted() ?? 0, activeAdSkips: recovery.skipped(), silencedBreaks: recovery.silenced(), errors: [...state.errors], appliedManagers: [...state.appliedManagers] });
     const issue = (label, error) => {
       const message = `${label}: ${error?.message || String(error)}`;
       if (!state.errors.includes(message)) state.errors = [...state.errors.slice(-7), message];
@@ -277,13 +370,16 @@
     function onSongChange() {
       refresh().then(() => recovery.check()).catch((error) => issue("active ad detection", error));
     }
+    function onPlayerUpdate() {
+      recovery.check().catch((error) => issue("active ad detection", error));
+    }
     function showStatus() {
       const root = host.document.createElement("div");
       const summary = host.document.createElement("p");
       summary.textContent = `AdBlockee ${VERSION} \xB7 Sponsor UI: ${state.cosmetic ? "active" : "waiting"} \xB7 Audio controls: ${state.audio}`;
       root.append(summary);
       const details = host.document.createElement("p");
-      details.textContent = `${state.slotCount} music ad slots monitored. ${guard?.intercepted() ?? 0} ad slot interceptions and ${recovery.skipped()} already-playing ads advanced this session. ${state.errors.length ? "Some controls need attention; see console warnings." : "No compatibility errors reported."}`;
+      details.textContent = `${state.slotCount} music ad slots monitored. ${guard?.intercepted() ?? 0} ad slot interceptions, ${recovery.skipped()} active ads advanced and ${recovery.silenced()} ad breaks silenced this session. ${state.errors.length ? "Some controls need attention; see console warnings." : "No compatibility errors reported."}`;
       root.append(details);
       const link = host.document.createElement("a");
       link.textContent = "Project, updates and bug reports";
@@ -294,6 +390,12 @@
       host.Spicetify?.PopupModal?.display?.({ title: "AdBlockee", content: root });
     }
     function connectPlayer(api) {
+      const currentEvents = api.Platform?.PlayerAPI?.getEvents?.();
+      if (currentEvents !== nativeEvents) {
+        nativeEvents?.removeListener?.("update", onPlayerUpdate);
+        nativeEvents = currentEvents;
+        nativeEvents?.addListener?.("update", onPlayerUpdate);
+      }
       if (api.Player?.addEventListener && player !== api.Player) {
         player?.removeEventListener?.("songchange", onSongChange);
         player = api.Player;
@@ -385,6 +487,7 @@
         }
       }, 250);
       heartbeat = host.setInterval(refresh, 3e4);
+      adPoll = host.setInterval(onPlayerUpdate, 500);
       return refresh();
     }
     function onVisible() {
@@ -394,8 +497,10 @@
       active = false;
       host.clearInterval(poll);
       host.clearInterval(heartbeat);
+      host.clearInterval(adPoll);
       host.document.removeEventListener("visibilitychange", onVisible);
       player?.removeEventListener?.("songchange", onSongChange);
+      nativeEvents?.removeListener?.("update", onPlayerUpdate);
       menu?.deregister?.();
       removeCosmetics(host.document);
       if (running) await running;

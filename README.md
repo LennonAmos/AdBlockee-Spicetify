@@ -15,6 +15,7 @@ Already using another ad blocker? Remove it first so only AdBlockee handles ads.
 ## Features
 
 - **Music ad blocking:** blocks supported music ad breaks while you listen.
+- **A quieter fallback:** detects ads that get through, requests a skip, and silences unskippable music ads until music returns. Your previous volume is restored automatically; an unskippable break can still take time to finish.
 - **The small labels, too:** hides “Limited ads” and “Presented by” sponsor branding on supported Spotify surfaces, including sponsored playlist headers and Now Playing.
 - **Sponsored playlists without the promotions:** removes sponsor cards, logos and “Learn more” buttons while keeping the playlist and its music available.
 - **No leftover gaps:** removes the extra header space reserved for sponsored playlist ads, so the artwork and title sit together naturally.
@@ -54,7 +55,7 @@ spicetify apply
 
 ## Development
 
-Requires Node.js 22+: `npm ci`, then `npm run check`. The project has 18 automated regression tests and GitHub CI. See [validation notes](VALIDATION.md) and the [changelog](CHANGELOG.md). For an installed-version check, open **Profile → AdBlockee status** in Spotify.
+Requires Node.js 22+: `npm ci`, then `npm run check`. The project has 33 automated regression tests and GitHub CI. See [validation notes](VALIDATION.md) and the [changelog](CHANGELOG.md). For an installed-version check, open **Profile → AdBlockee status** in Spotify.
 
 Maintained by **LennonAmos**, with Codex assistance. [MIT licensed](LICENSE). Not affiliated with Spotify or Spicetify. If it helps you, a star helps other Marketplace users find it.
 

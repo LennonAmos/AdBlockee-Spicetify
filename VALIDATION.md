@@ -1,4 +1,14 @@
-# Validation — 2.1.2
+# Validation — 2.1.3
+
+Audio-ad follow-up, 23 October 2026:
+
+- Observed an actual Tesco audio ad in Spotify 1.3.6.1921 while the Marketplace installation was running AdBlockee 2.1.2. Its status reported nine monitored slots and no compatibility errors. This establishes an escaped ad, not its exact cause or a confirmed Spotify anti-blocker patch.
+- Inspected the installed player's normalization code: native ad items have `type: "ad"` and an ad URI, independently of the legacy `is_advertisement` metadata field. Expanded recovery to recognize these formats.
+- Probed Spotify's native slot-disable command. It returned success while readback still showed the slot enabled; no claim of native slot disabling is made and that experiment is not included in the extension. A separate temporary ad-state probe was restored to its original value.
+- Loaded the 2.1.3 bundle in Spotify. Nine monitors attached without compatibility errors; ordinary music kept its volume and was not skipped.
+- Exercised the new silencer against the real Spotify volume API with a controlled ad marker, without altering the native player's item or sending skip commands. The volume reached zero, then returned to exactly `0.8602121004043641`; both results were read back. The temporary in-memory test function was deleted immediately.
+- All 33 regression tests, bundle generation and syntax checking pass. Tests cover native ad formats, missing events, refused skips, consecutive ads, stale/unknown state, volume restoration and user changes, delayed volume caches, pending-mute disposal, stopped playback, podcast exclusions and endpoint reapplication.
+- A further real ad break has not yet been observed under 2.1.3. Native volume verification and synthetic ad-state tests do not establish that every real ad will be skipped or muted before any audio escapes. Unskippable breaks may finish silently before music resumes.
 
 Active-ad startup recovery, 21 October 2026:
 

@@ -22,10 +22,17 @@ export function createSlotGuard(connector, attempt, isActive) {
     entry.endpoint = result.ok;
   }
 
-  function clear(slot) {
+  function clear(slot, entry, refreshEndpoint = false) {
     if (stopped || !isActive()) return Promise.resolve();
     if (clearing.has(slot)) return clearing.get(slot);
-    const pending = attempt(`clear ${slot}`, () => connector.clearSlot(slot))
+    const pending = (async () => {
+      // An arrival means the old endpoint did not prevent this request. Spotify
+      // may have reset it. Clear immediately; a slow endpoint override must
+      // never delay interception or change the player's media preference.
+      const cleared = attempt(`clear ${slot}`, () => connector.clearSlot(slot));
+      if (refreshEndpoint) { entry.endpoint = false; await setEndpoint(slot, entry); }
+      return cleared;
+    })()
       .then(result => { if (result.ok) intercepted++; })
       .finally(() => clearing.delete(slot));
     clearing.set(slot, pending);
@@ -46,7 +53,7 @@ export function createSlotGuard(connector, attempt, isActive) {
       const event = message?.adSlotEvent;
       // Native enum: AVAILABLE=0, PLAY=1, DISCARD=2. Clearing sends DISCARD;
       // ignoring it prevents a recursive clear loop and media-mode churn.
-      if (event?.ad && (event.eventType === 0 || event.eventType === 1)) clear(slot);
+      if (event?.ad && (event.eventType === 0 || event.eventType === 1)) clear(slot, entry, true);
     }));
     if (subscription.ok) entry.subscription = subscription.value;
     if (stopped || !isActive()) {

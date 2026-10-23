@@ -1,13 +1,22 @@
-function currentAdvertisement(api) {
+import { createAdSilencer } from "./ad-silencer.js";
+
+export function currentAdvertisement(api) {
   const native = api?.Platform?.PlayerAPI;
+  let state;
   let item;
-  try { item = typeof native?.getState === "function" ? native.getState()?.item : api?.Player?.data?.item; }
+  try {
+    state = typeof native?.getState === "function" ? native.getState() : api?.Player?.data;
+    item = state?.item;
+  }
   catch { return undefined; }
-  if (!item) return undefined;
+  if (!item) return state?.hasContext === false ? null : undefined;
   const metadata = item?.metadata;
-  // Use Spotify's explicit ad flag, never the title, artist or disabled controls.
-  if (metadata?.is_advertisement !== "true" && metadata?.is_advertisement !== true) return null;
-  const id = [item.uid, metadata.ad_id, item.uri].filter(Boolean).join("|");
+  // The native player also exposes type="ad" when the older metadata flag is
+  // absent. Neither titles nor disabled controls are evidence of an advert.
+  if (item.isPodcastAd === true || metadata?.is_podcast_advertisement === "true" || metadata?.is_podcast_advertisement === true) return null;
+  if (item.type !== "ad" && !/^spotify:ad:[^:]+$/.test(item.uri ?? "")
+    && metadata?.is_advertisement !== "true" && metadata?.is_advertisement !== true) return null;
+  const id = [item.uid, item.id, metadata?.ad_id, item.uri].filter(Boolean).join("|");
   return id ? { id, native: typeof native?.skipToNext === "function" ? native : api?.Player?.origin } : undefined;
 }
 
@@ -16,9 +25,12 @@ export function createActiveAdRecovery(getApi, attempt, isActive, host) {
   const pending = new Map();
   let stopped = false;
   let skipped = 0;
+  const silencer = createAdSilencer(getApi, currentAdvertisement, attempt);
 
-  function check() {
+  async function check() {
     if (stopped || !isActive()) return Promise.resolve();
+    await silencer.sync();
+    if (stopped || !isActive()) return;
     const ad = currentAdvertisement(getApi());
     if (!ad || typeof ad.native?.skipToNext !== "function") return Promise.resolve();
     if (pending.has(ad.id)) return pending.get(ad.id);
@@ -41,7 +53,10 @@ export function createActiveAdRecovery(getApi, attempt, isActive, host) {
       }
       throw Error("Spotify did not advance the active ad; it may be unskippable");
     }).then(result => { if (result.ok && result.value === true) skipped++; })
-      .finally(() => pending.delete(ad.id));
+      .finally(async () => {
+        pending.delete(ad.id);
+        if (!stopped && isActive()) await silencer.sync();
+      });
     pending.set(ad.id, request);
     return request;
   }
@@ -49,8 +64,9 @@ export function createActiveAdRecovery(getApi, attempt, isActive, host) {
   async function dispose() {
     stopped = true;
     await Promise.all([...pending.values()]);
+    await silencer.dispose();
     handled.clear();
   }
 
-  return { check, dispose, skipped: () => skipped };
+  return { check, dispose, skipped: () => skipped, silenced: silencer.count };
 }
