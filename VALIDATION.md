@@ -1,4 +1,15 @@
-# Validation — 2.1.3
+# Validation — 2.2.0
+
+Native prevention, 23 October 2026:
+
+- Compared the current Adblockify source's native settings and playtime techniques with AdBlockee. Added independently implemented native service discovery and prevention controls rather than treating mute/skip recovery as the primary blocker.
+- Loaded 2.2.0 into Spotify 1.3.6.1921. Six created music slots retained zero stream/display intervals. Three configured UI slots had not yet been created and remained pending; nine music slots were monitored in total, with no compatibility errors.
+- Native `enabled:false` writes still returned success while settings readback reported `enabled:true`. The status correctly reports zero verified slot-disable settings; request/timing protection and scheduler guarding are separate controls.
+- The native `ad_enabled` scheduler state read back as `false`. Deliberately setting it to `true` was repaired to `false` within the 200 ms observation window, without a callback feedback loop.
+- A controlled native stream-slot trigger left `hasActiveAd:false`, `hasAvailableAds:false` and an empty inventory while a normal track remained in the player. Recovery counters stayed at zero: the test used neither muting nor queue advancement. Playback volume stayed at its starting value.
+- Inspected the generated Testing protocol: `AddPlaytime.seconds` is `uint32` in this client. The older negative argument wraps to a large positive number in that codec; 2.2.0 detects the failed signed round trip and does not send it. Compatible signed codecs are covered by tests, but that legacy path has not been tested on an older live Spotify client.
+- Temporary product-state probes were removed and the existing ads-only override reinstated. Account subscription/catalogue overrides, audio quality, media mode and podcast slots are not part of this implementation. Temporary module-resolution probes were deleted from memory; no temporary test files were created.
+- All 45 automated tests, bundle generation and syntax checking pass. The controlled trigger and native state/readback checks are stronger than mute-only verification, but are not proof that every server-delivered ad path or future Spotify version is blocked. Longer ordinary listening remains necessary to establish the escaped-ad rate.
 
 Audio-ad follow-up, 23 October 2026:
 

@@ -1,16 +1,14 @@
 import { installCosmetics, removeCosmetics } from "./cosmetics.js";
-import { createSlotGuard } from "./slots.js";
+import { createSlotGuard, MUSIC_SLOTS } from "./slots.js";
 import { createActiveAdRecovery } from "./active-ad.js";
+import { createNativePrevention } from "./native-prevention.js";
 
-const VERSION = "2.1.3";
-const MUSIC_SLOTS = new Set([
-  "stream", "preroll", "hpto", "leaderboard", "sponsored-playlist",
-  "embedded-npv", "embedded-playlist", "embedded-playlist-leavebehind", "stream-user-actions", "music-see-all",
-]);
+const VERSION = "2.2.0";
 
 export function createController(host) {
   let active = false;
   let running = null;
+  let refreshNeeded = false;
   let poll;
   let heartbeat;
   let adPoll;
@@ -33,7 +31,7 @@ export function createController(host) {
     errors: [],
   };
 
-  const status = () => ({ ...state, intercepted: guard?.intercepted() ?? 0, activeAdSkips: recovery.skipped(), silencedBreaks: recovery.silenced(), errors: [...state.errors], appliedManagers: [...state.appliedManagers] });
+  const status = () => ({ ...state, nativePrevention: prevention.status(), intercepted: guard?.intercepted() ?? 0, activeAdSkips: recovery.skipped(), silencedBreaks: recovery.silenced(), errors: [...state.errors], appliedManagers: [...state.appliedManagers] });
   const issue = (label, error) => {
     const message = `${label}: ${error?.message || String(error)}`;
     if (!state.errors.includes(message)) state.errors = [...state.errors.slice(-7), message];
@@ -57,6 +55,7 @@ export function createController(host) {
   }
 
   const recovery = createActiveAdRecovery(() => host.Spicetify, attempt, () => active, host);
+  const prevention = createNativePrevention(host, attempt, () => active);
 
   function onSongChange() {
     refresh().then(() => recovery.check()).catch(error => issue("active ad detection", error));
@@ -74,6 +73,10 @@ export function createController(host) {
     const details = host.document.createElement("p");
     details.textContent = `${state.slotCount} music ad slots monitored. ${guard?.intercepted() ?? 0} ad slot interceptions, ${recovery.skipped()} active ads advanced and ${recovery.silenced()} ad breaks silenced this session. ${state.errors.length ? "Some controls need attention; see console warnings." : "No compatibility errors reported."}`;
     root.append(details);
+    const native = prevention.status();
+    const preventionDetails = host.document.createElement("p");
+    preventionDetails.textContent = `Native prevention: ${native.slotsConfigured} music slots configured; ad scheduler ${native.scheduler}. ${native.slotDisableVerified} slot-disable settings confirmed by readback.`;
+    root.append(preventionDetails);
     const link = host.document.createElement("a");
     link.textContent = "Project, updates and bug reports";
     link.href = "https://github.com/LennonAmos/AdBlockee-Spicetify";
@@ -138,12 +141,6 @@ export function createController(host) {
     state.appliedManagers = results.filter(Boolean);
     state.audio = state.appliedManagers.includes("audio") ? "applied" : "unavailable";
 
-    // A late install misses the slot's original PLAY event. Check the actual
-    // player after disabling managers, whose skip hooks can otherwise consume
-    // the command. Recovery never relies on those managers' cached ad state.
-    await recovery.check();
-    if (!active) return;
-
     const product = platform.ProductStateAPI?.productStateApi
       || platform.UserAPI?._product_state_service || platform.UserAPI?._product_state;
     if (product !== overrideOwner && typeof product?.putOverridesValues === "function") {
@@ -158,7 +155,12 @@ export function createController(host) {
       await guard?.dispose();
       connector = current;
       slotNames = [];
-      guard = connector ? createSlotGuard(connector, attempt, () => active) : undefined;
+      guard = connector ? createSlotGuard(connector, attempt, () => active, slot => {
+        prevention.invalidate(slot);
+        overrideOwner = undefined;
+        if (running) refreshNeeded = true;
+        refresh();
+      }) : undefined;
     }
     if (connector?.clearSlot && guard) {
       if (!slotNames.length && typeof managers.config?.getAdsSlotConfig === "function") {
@@ -168,9 +170,12 @@ export function createController(host) {
         }
       }
       if (!active) return;
+      slotNames = await prevention.configure(platform, connector, slotNames);
+      if (!active) return;
       await Promise.all(slotNames.map(slot => guard.watch(slot)));
       state.slotCount = guard.count();
     }
+    await recovery.check();
     state.lastCheck = new Date().toISOString();
   }
 
@@ -178,7 +183,10 @@ export function createController(host) {
     if (!active) return Promise.resolve(status());
     // A single in-flight refresh bounds work during rapid navigation/song changes.
     if (running) return running.then(status);
-    running = protect().catch(error => issue("refresh", error)).finally(() => { running = null; });
+    running = protect().catch(error => issue("refresh", error)).finally(() => {
+      running = null;
+      if (active && refreshNeeded) { refreshNeeded = false; refresh(); }
+    });
     return running.then(status);
   }
 
@@ -218,6 +226,7 @@ export function createController(host) {
     removeCosmetics(host.document);
     if (running) await running;
     await guard?.dispose();
+    await prevention.dispose({ restore });
     await recovery.dispose();
     // A pending initial request may have completed while disposal was waiting.
     if (restore && overrideOwner?.delOverridesValues) {

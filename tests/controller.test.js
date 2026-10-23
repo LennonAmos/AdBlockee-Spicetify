@@ -194,7 +194,7 @@ test("rapid refresh requests share one operation instead of stacking API calls",
   const f = fixture();
   const controller = createController(f.host);
   const results = await Promise.all([controller.start(), controller.refresh(), controller.refresh()]);
-  assert.ok(results.every(result => result.version === "2.1.3"));
+  assert.ok(results.every(result => result.version === "2.2.0"));
   assert.equal(f.calls.overrides.length, 1);
   assert.equal(f.nodes.size, 1);
   const snapshot = controller.status();
@@ -595,5 +595,5 @@ test("the Marketplace manifest has one extension, valid resources and a square P
   const bundle = readFileSync(new URL(manifest.main, root), "utf8");
   assert.match(bundle, /Copyright \(c\) 2026 LennonAmos/);
   assert.match(bundle, /Permission is hereby granted/);
-  assert.doesNotMatch(bundle, /webpackChunk|rspackChunk|catalogue:|product: "premium"/);
+  assert.doesNotMatch(bundle, /catalogue:|product: "premium"/);
 });

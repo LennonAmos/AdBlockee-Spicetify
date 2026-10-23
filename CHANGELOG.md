@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.2.0 — 2026-10-23
+
+- Add native ad prevention ahead of playback recovery: request endpoint overrides, stream/display timing overrides and explicit slot-disable requests using Spotify's generated native service clients.
+- Guard the native `ad_enabled` scheduler state and reassert prevention after scheduler resets or music-ad arrivals. Discover newly created music slots while excluding podcast slots.
+- Resolve only matching generated ad-service modules instead of evaluating the full module registry.
+- Check actual native readback. Timing overrides, scheduler suppression and confirmed slot disabling are reported separately; an acknowledged write alone is not counted as verified disabling.
+- Apply the older negative-playtime workaround only if the installed protocol can encode and decode that negative value unchanged. Current unsigned clients skip it, avoiding unsigned wraparound; compatible clients receive it once and undo it on explicit disposal.
+- Treat not-yet-created UI slots as pending, rather than compatibility errors. Keep the existing skip/silence layer as emergency recovery, not primary prevention.
+- Add 12 regression tests for native controls, selective module loading, resets, lazy slots, protocol differences, readback failures and cleanup.
+
 ## 2.1.3 — 2026-10-23
 
 - Recognize native `type: "ad"` items and `spotify:ad:` URIs even when the older advertisement metadata flag is absent.

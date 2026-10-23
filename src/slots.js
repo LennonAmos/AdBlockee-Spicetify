@@ -1,13 +1,17 @@
 // Native slot events let us act when an ad arrives, rather than interrupting
 // the player on a timer. Never use enableSlot: it always enables the slot.
-const BLOCKED_ENDPOINT = "http://127.0.0.1:9/adblockee";
+export const BLOCKED_ENDPOINT = "http://127.0.0.1:9/adblockee";
+export const MUSIC_SLOTS = new Set([
+  "stream", "preroll", "hpto", "leaderboard", "sponsored-playlist",
+  "embedded-npv", "embedded-playlist", "embedded-playlist-leavebehind", "stream-user-actions", "music-see-all",
+]);
 
 export function hasAds(value) {
   const slot = value?.adSlot ?? value;
   return Boolean(slot?.hasActiveAd || slot?.hasAvailableAds || slot?.availableAds?.length);
 }
 
-export function createSlotGuard(connector, attempt, isActive) {
+export function createSlotGuard(connector, attempt, isActive, onAd = () => {}) {
   const watched = new Map();
   const clearing = new Map();
   let stopped = false;
@@ -53,7 +57,10 @@ export function createSlotGuard(connector, attempt, isActive) {
       const event = message?.adSlotEvent;
       // Native enum: AVAILABLE=0, PLAY=1, DISCARD=2. Clearing sends DISCARD;
       // ignoring it prevents a recursive clear loop and media-mode churn.
-      if (event?.ad && (event.eventType === 0 || event.eventType === 1)) clear(slot, entry, true);
+      if (event?.ad && (event.eventType === 0 || event.eventType === 1)) {
+        clear(slot, entry, true);
+        onAd(slot);
+      }
     }));
     if (subscription.ok) entry.subscription = subscription.value;
     if (stopped || !isActive()) {

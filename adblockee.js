@@ -1,4 +1,4 @@
-/*! AdBlockee v2.1.3
+/*! AdBlockee v2.2.0
  * MIT License
  *
  * Copyright (c) 2026 LennonAmos
@@ -92,11 +92,24 @@
 
   // src/slots.js
   var BLOCKED_ENDPOINT = "http://127.0.0.1:9/adblockee";
+  var MUSIC_SLOTS = /* @__PURE__ */ new Set([
+    "stream",
+    "preroll",
+    "hpto",
+    "leaderboard",
+    "sponsored-playlist",
+    "embedded-npv",
+    "embedded-playlist",
+    "embedded-playlist-leavebehind",
+    "stream-user-actions",
+    "music-see-all"
+  ]);
   function hasAds(value) {
     const slot = value?.adSlot ?? value;
     return Boolean(slot?.hasActiveAd || slot?.hasAvailableAds || slot?.availableAds?.length);
   }
-  function createSlotGuard(connector, attempt, isActive) {
+  function createSlotGuard(connector, attempt, isActive, onAd = () => {
+  }) {
     const watched = /* @__PURE__ */ new Map();
     const clearing = /* @__PURE__ */ new Map();
     let stopped = false;
@@ -140,7 +153,10 @@
       }
       const subscription = await attempt(`watch ${slot}`, () => connector.subscribeToSlot(slot, (message) => {
         const event = message?.adSlotEvent;
-        if (event?.ad && (event.eventType === 0 || event.eventType === 1)) clear(slot, entry, true);
+        if (event?.ad && (event.eventType === 0 || event.eventType === 1)) {
+          clear(slot, entry, true);
+          onAd(slot);
+        }
       }));
       if (subscription.ok) entry.subscription = subscription.value;
       if (stopped || !isActive()) {
@@ -305,23 +321,194 @@
     return { check, dispose, skipped: () => skipped, silenced: silencer.count };
   }
 
+  // src/native-clients.js
+  var SERVICES = {
+    settings: /* @__PURE__ */ new Set(["spotify.ads.esperanto.proto.Settings", "spotify.ads.esperanto.settings.proto.Settings"]),
+    slots: /* @__PURE__ */ new Set(["spotify.ads.esperanto.proto.Slots", "spotify.ads.esperanto.slots.proto.Slots"]),
+    testing: /* @__PURE__ */ new Set(["spotify.ads.esperanto.proto.Testing", "spotify.ads.esperanto.testing.proto.Testing"])
+  };
+  function resolveNativeClients(host, transport) {
+    if (typeof transport?.callSingle !== "function") return void 0;
+    const queue = [host.rspackChunk, host.webpackChunkclient_web, host.rspackChunkclient_web].find((value) => Array.isArray(value));
+    if (!queue) return void 0;
+    let runtime;
+    const chunk = [[/* @__PURE__ */ Symbol("AdBlockee native services")], {}, (value) => {
+      runtime = value;
+    }];
+    queue.push(chunk);
+    if (queue[queue.length - 1] === chunk) queue.pop();
+    if (typeof runtime !== "function" || !runtime.m) return void 0;
+    const found = {};
+    for (const [id, factory] of Object.entries(runtime.m)) {
+      const source = String(factory);
+      if (!Object.values(SERVICES).some((ids) => [...ids].some((service) => source.includes(service)))) continue;
+      const exports = runtime(id);
+      for (const Client of Object.values(exports ?? {})) {
+        if (typeof Client !== "function") continue;
+        for (const [kind, ids] of Object.entries(SERVICES)) {
+          if (!found[kind] && ids.has(Client.SERVICE_ID)) found[kind] = new Client(transport);
+        }
+      }
+    }
+    return Object.keys(found).length ? found : void 0;
+  }
+  function supportsNegativePlaytime(client, seconds) {
+    const type = client?.constructor?.METHODS?.addPlaytime?.requestType;
+    if (!type?.encode || !type?.decode || !type?.fromPartial) return false;
+    try {
+      const encoded = type.encode(type.fromPartial({ seconds })).finish();
+      return Number(type.decode(encoded).seconds) === seconds;
+    } catch {
+      return false;
+    }
+  }
+
+  // src/native-prevention.js
+  var PLAYTIME_OFFSET = -1e11;
+  var gateValue = (response) => response?.state?.ad_enabled?.value;
+  var checked = (response) => {
+    if (response?.status !== void 0 && response.status !== 0) throw Error(`native status ${response.status}`);
+    return response;
+  };
+  function createNativePrevention(host, attempt, isActive) {
+    let clients;
+    let transport;
+    let connector;
+    let subscription;
+    let originalGate;
+    let gateRequest;
+    let stopped = false;
+    let playtimeDone = false;
+    const configured = /* @__PURE__ */ new Set();
+    const originals = /* @__PURE__ */ new Map();
+    const waiting = /* @__PURE__ */ new Set();
+    const state = { available: false, slotsConfigured: 0, slotDisableVerified: 0, scheduler: "waiting", playtime: "waiting" };
+    const verifiedDisabled = /* @__PURE__ */ new Set();
+    async function suppressScheduler() {
+      if (stopped || !isActive() || !connector?.getAdState || !connector?.putState) return;
+      if (gateRequest) return gateRequest;
+      gateRequest = attempt("native ad scheduler", async () => {
+        const before = gateValue(await connector.getAdState());
+        if (before !== "true" && before !== "false") throw Error("ad_enabled state unavailable");
+        originalGate ??= before;
+        if (before !== "false" && !stopped && isActive()) checked(await connector.putState("ad_enabled", "false"));
+        const after = gateValue(await connector.getAdState());
+        if (after !== "false") throw Error("Spotify did not retain the scheduler override");
+      }).then((result) => {
+        state.scheduler = result.ok ? "suppressed" : "unavailable";
+      }).finally(() => {
+        gateRequest = void 0;
+      });
+      return gateRequest;
+    }
+    async function connect(current) {
+      if (current === connector) return;
+      subscription?.cancel?.();
+      if (gateRequest) await gateRequest;
+      connector = current;
+      originalGate = void 0;
+      if (typeof connector?.subscribeToState === "function") {
+        const attached = await attempt("watch native ad scheduler", () => connector.subscribeToState((message) => {
+          if (gateValue(message) === "true") suppressScheduler();
+        }));
+        if (attached.ok) subscription = attached.value;
+      }
+    }
+    async function configureSlot(slot) {
+      if (configured.has(slot) || stopped || !isActive() || !clients?.settings) return;
+      const settings = clients.settings;
+      const result = await attempt(`native prevention ${slot}`, async () => {
+        const before = (await settings.getSlotSettings({ slotId: slot }))?.slotSettings?.find((s) => s.id === slot);
+        if (!before) {
+          waiting.add(slot);
+          return;
+        }
+        waiting.delete(slot);
+        if (!originals.has(slot)) originals.set(slot, { ...before });
+        checked(await settings.updateAdServerEndpoint({ slotIds: [slot], url: BLOCKED_ENDPOINT }));
+        if (stopped || !isActive()) return;
+        checked(await settings.updateStreamTimeInterval({ slotId: slot, timeInterval: 0n }));
+        checked(await settings.updateDisplayTimeInterval({ slotId: slot, timeInterval: 0n }));
+        checked(await settings.updateSlotEnabled({ slotId: slot, enabled: false }));
+        const after = (await settings.getSlotSettings({ slotId: slot }))?.slotSettings?.find((s) => s.id === slot);
+        if (!after || BigInt(after.streamTimeInterval ?? -1) !== 0n || BigInt(after.displayTimeInterval ?? -1) !== 0n) {
+          throw Error("Spotify did not retain the timing overrides");
+        }
+        if (after.enabled === false) verifiedDisabled.add(slot);
+        else verifiedDisabled.delete(slot);
+        if (!stopped && isActive()) configured.add(slot);
+      });
+      if (!result.ok) configured.delete(slot);
+    }
+    async function configure(platform, currentConnector, names) {
+      if (stopped || !isActive()) return names;
+      const product = platform.ProductStateAPI?.productStateApi || platform.UserAPI?._product_state_service || platform.UserAPI?._product_state;
+      const currentTransport = product?.transport;
+      if (currentTransport !== transport || !clients) {
+        transport = currentTransport;
+        const resolved = await attempt("native ad services", () => resolveNativeClients(host, transport));
+        clients = resolved.ok ? resolved.value : void 0;
+        configured.clear();
+        verifiedDisabled.clear();
+        waiting.clear();
+        playtimeDone = false;
+      }
+      state.available = Boolean(clients?.settings);
+      await connect(currentConnector);
+      await suppressScheduler();
+      let slots = [...names];
+      if (clients?.slots?.getSlots) {
+        const inventory = await attempt("native music slots", () => clients.slots.getSlots({}));
+        if (inventory.ok) slots = [.../* @__PURE__ */ new Set([...slots, ...(inventory.value?.adSlots ?? []).map((s) => s.slotId ?? s.slot_id)])].filter((slot) => MUSIC_SLOTS.has(slot));
+      }
+      if (clients?.testing && !playtimeDone) {
+        if (supportsNegativePlaytime(clients.testing, PLAYTIME_OFFSET)) {
+          const result = await attempt("native ad playtime offset", () => clients.testing.addPlaytime({ seconds: PLAYTIME_OFFSET }));
+          playtimeDone = result.ok;
+          state.playtime = result.ok ? "requested" : "unavailable";
+        } else {
+          playtimeDone = true;
+          state.playtime = "unsupported-unsigned";
+        }
+      } else if (!clients?.testing) state.playtime = "unavailable";
+      await Promise.all(slots.map(configureSlot));
+      state.slotsConfigured = configured.size;
+      state.slotDisableVerified = verifiedDisabled.size;
+      return slots;
+    }
+    function invalidate(slot) {
+      configured.delete(slot);
+    }
+    async function dispose({ restore = true } = {}) {
+      stopped = true;
+      subscription?.cancel?.();
+      if (gateRequest) await gateRequest;
+      if (!restore) return;
+      if (state.playtime === "requested" && clients?.testing?.addPlaytime) {
+        await attempt("restore native ad playtime", () => clients.testing.addPlaytime({ seconds: -PLAYTIME_OFFSET }));
+      }
+      for (const [slot, previous] of originals) {
+        await attempt(`restore native timing ${slot}`, async () => {
+          if (previous.streamTimeInterval !== void 0) checked(await clients.settings.updateStreamTimeInterval({ slotId: slot, timeInterval: BigInt(previous.streamTimeInterval) }));
+          checked(await clients.settings.updateDisplayTimeInterval({ slotId: slot, timeInterval: BigInt(previous.displayTimeInterval ?? 0) }));
+          checked(await clients.settings.updateSlotEnabled({ slotId: slot, enabled: previous.enabled }));
+        });
+      }
+      if (originalGate === "true" && connector?.getAdState && connector?.putState) {
+        await attempt("restore native ad scheduler", async () => {
+          if (gateValue(await connector.getAdState()) === "false") checked(await connector.putState("ad_enabled", originalGate));
+        });
+      }
+    }
+    return { configure, invalidate, dispose, status: () => ({ ...state, awaitingSlots: [...waiting] }) };
+  }
+
   // src/controller.js
-  var VERSION = "2.1.3";
-  var MUSIC_SLOTS = /* @__PURE__ */ new Set([
-    "stream",
-    "preroll",
-    "hpto",
-    "leaderboard",
-    "sponsored-playlist",
-    "embedded-npv",
-    "embedded-playlist",
-    "embedded-playlist-leavebehind",
-    "stream-user-actions",
-    "music-see-all"
-  ]);
+  var VERSION = "2.2.0";
   function createController(host) {
     let active = false;
     let running = null;
+    let refreshNeeded = false;
     let poll;
     let heartbeat;
     let adPoll;
@@ -343,7 +530,7 @@
       lastCheck: null,
       errors: []
     };
-    const status = () => ({ ...state, intercepted: guard?.intercepted() ?? 0, activeAdSkips: recovery.skipped(), silencedBreaks: recovery.silenced(), errors: [...state.errors], appliedManagers: [...state.appliedManagers] });
+    const status = () => ({ ...state, nativePrevention: prevention.status(), intercepted: guard?.intercepted() ?? 0, activeAdSkips: recovery.skipped(), silencedBreaks: recovery.silenced(), errors: [...state.errors], appliedManagers: [...state.appliedManagers] });
     const issue = (label, error) => {
       const message = `${label}: ${error?.message || String(error)}`;
       if (!state.errors.includes(message)) state.errors = [...state.errors.slice(-7), message];
@@ -367,6 +554,7 @@
       }
     }
     const recovery = createActiveAdRecovery(() => host.Spicetify, attempt, () => active, host);
+    const prevention = createNativePrevention(host, attempt, () => active);
     function onSongChange() {
       refresh().then(() => recovery.check()).catch((error) => issue("active ad detection", error));
     }
@@ -381,6 +569,10 @@
       const details = host.document.createElement("p");
       details.textContent = `${state.slotCount} music ad slots monitored. ${guard?.intercepted() ?? 0} ad slot interceptions, ${recovery.skipped()} active ads advanced and ${recovery.silenced()} ad breaks silenced this session. ${state.errors.length ? "Some controls need attention; see console warnings." : "No compatibility errors reported."}`;
       root.append(details);
+      const native = prevention.status();
+      const preventionDetails = host.document.createElement("p");
+      preventionDetails.textContent = `Native prevention: ${native.slotsConfigured} music slots configured; ad scheduler ${native.scheduler}. ${native.slotDisableVerified} slot-disable settings confirmed by readback.`;
+      root.append(preventionDetails);
       const link = host.document.createElement("a");
       link.textContent = "Project, updates and bug reports";
       link.href = "https://github.com/LennonAmos/AdBlockee-Spicetify";
@@ -438,8 +630,6 @@
       if (!active) return;
       state.appliedManagers = results.filter(Boolean);
       state.audio = state.appliedManagers.includes("audio") ? "applied" : "unavailable";
-      await recovery.check();
-      if (!active) return;
       const product = platform.ProductStateAPI?.productStateApi || platform.UserAPI?._product_state_service || platform.UserAPI?._product_state;
       if (product !== overrideOwner && typeof product?.putOverridesValues === "function") {
         const result = await attempt("ad preference", () => product.putOverridesValues({ pairs: { ads: "0" } }));
@@ -451,7 +641,12 @@
         await guard?.dispose();
         connector = current;
         slotNames = [];
-        guard = connector ? createSlotGuard(connector, attempt, () => active) : void 0;
+        guard = connector ? createSlotGuard(connector, attempt, () => active, (slot) => {
+          prevention.invalidate(slot);
+          overrideOwner = void 0;
+          if (running) refreshNeeded = true;
+          refresh();
+        }) : void 0;
       }
       if (connector?.clearSlot && guard) {
         if (!slotNames.length && typeof managers.config?.getAdsSlotConfig === "function") {
@@ -461,9 +656,12 @@
           }
         }
         if (!active) return;
+        slotNames = await prevention.configure(platform, connector, slotNames);
+        if (!active) return;
         await Promise.all(slotNames.map((slot) => guard.watch(slot)));
         state.slotCount = guard.count();
       }
+      await recovery.check();
       state.lastCheck = (/* @__PURE__ */ new Date()).toISOString();
     }
     function refresh() {
@@ -471,6 +669,10 @@
       if (running) return running.then(status);
       running = protect().catch((error) => issue("refresh", error)).finally(() => {
         running = null;
+        if (active && refreshNeeded) {
+          refreshNeeded = false;
+          refresh();
+        }
       });
       return running.then(status);
     }
@@ -505,6 +707,7 @@
       removeCosmetics(host.document);
       if (running) await running;
       await guard?.dispose();
+      await prevention.dispose({ restore });
       await recovery.dispose();
       if (restore && overrideOwner?.delOverridesValues) {
         try {
