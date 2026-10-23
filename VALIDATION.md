@@ -10,6 +10,7 @@ Native prevention, 23 October 2026:
 - Inspected the generated Testing protocol: `AddPlaytime.seconds` is `uint32` in this client. The older negative argument wraps to a large positive number in that codec; 2.2.0 detects the failed signed round trip and does not send it. Compatible signed codecs are covered by tests, but that legacy path has not been tested on an older live Spotify client.
 - Temporary product-state probes were removed and the existing ads-only override reinstated. Account subscription/catalogue overrides, audio quality, media mode and podcast slots are not part of this implementation. Temporary module-resolution probes were deleted from memory; no temporary test files were created.
 - All 45 automated tests, bundle generation and syntax checking pass. The controlled trigger and native state/readback checks are stronger than mute-only verification, but are not proof that every server-delivered ad path or future Spotify version is blocked. Longer ordinary listening remains necessary to establish the escaped-ad rate.
+- GitHub CI passed for the published code. After the initial CDN response remained stale, a second purge produced a byte-for-byte match with the release bundle. A full Spotify restart then loaded 2.2.0 from the persisted Marketplace installation, with six configured native slots, nine monitors, scheduler suppression confirmed by native readback and no compatibility errors. Both recovery counters remained zero. No manual installation was needed.
 
 Audio-ad follow-up, 23 October 2026:
 

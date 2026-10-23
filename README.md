@@ -14,8 +14,8 @@ Already using another ad blocker? Remove it first so only AdBlockee handles ads.
 
 ## Features
 
-- **Music ad prevention:** combines native ad-request overrides, slot timing controls and a guarded scheduler override to stop supported music ad breaks before playback.
-- **Protection against resets:** reapplies native controls when Spotify resets its scheduler or an ad reaches a monitored music slot.
+- **Music ad prevention:** several blocking layers work together to stop supported music ads before they start.
+- **Protection that stays active:** reapplies blocking when Spotify resets its ad controls or creates new advertising slots while you browse.
 - **The small labels, too:** hides “Limited ads” and “Presented by” sponsor branding on supported Spotify surfaces, including sponsored playlist headers and Now Playing.
 - **Sponsored playlists without the promotions:** removes sponsor cards, logos and “Learn more” buttons while keeping the playlist and its music available.
 - **No leftover gaps:** removes the extra header space reserved for sponsored playlist ads, so the artwork and title sit together naturally.
