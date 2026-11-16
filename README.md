@@ -4,6 +4,8 @@ Block music ads and clean up sponsored playlists — right down to the “Limite
 
 For Spotify desktop with Spicetify. No extra account or blocking app needed.
 
+# THIS REPO IS UPDATED EVERY 2-4 WEEKS! IF YOU SEE THERE HAS NOT BEEN IN RELEASE, DO NOT WORRY THIS PROJECT IS NOT ABANDONED!
+
 ## Install
 
 1. Open **Spicetify Marketplace → Extensions**.
