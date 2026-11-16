@@ -19,7 +19,8 @@ Already using another ad blocker? Remove it first so only AdBlockee handles ads.
 - **The small labels, too:** hides “Limited ads” and “Presented by” sponsor branding on supported Spotify surfaces, including sponsored playlist headers and Now Playing.
 - **Sponsored playlists without the promotions:** removes sponsor cards, logos and “Learn more” buttons while keeping the playlist and its music available.
 - **No leftover gaps:** removes the extra header space reserved for sponsored playlist ads, so the artwork and title sit together naturally.
-- **A cleaner Spotify:** hides supported homepage, billboard and Now Playing advertising panels.
+- **Recent ads:** hides the Recent ads cards Spotify inserts in Daily Mix and other playlists, including the advertiser row and Learn more button.
+- **A cleaner Spotify:** hides supported homepage, billboard and Now Playing advertising panels, including display and video creatives that get past prevention.
 - **Your playback stays yours:** keeps your audio/video preference, subscription and audio quality unchanged.
 - **Private by design:** no telemetry, tracking service or extra sign-up.
 
@@ -57,7 +58,7 @@ spicetify apply
 
 ## Development
 
-Requires Node.js 22+: `npm ci`, then `npm run check`. The project has 45 automated regression tests and GitHub CI. See [validation notes](VALIDATION.md) and the [changelog](CHANGELOG.md). For an installed-version check, open **Profile → AdBlockee status** in Spotify.
+Requires Node.js 22+: `npm ci`, then `npm run check`. The project has 49 automated regression tests and GitHub CI. See [validation notes](VALIDATION.md) and the [changelog](CHANGELOG.md). For an installed-version check, open **Profile → AdBlockee status** in Spotify.
 
 Maintained by **LennonAmos**, with Codex assistance. [MIT licensed](LICENSE). Not affiliated with Spotify or Spicetify. If it helps you, a star helps other Marketplace users find it.
 

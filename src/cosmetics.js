@@ -36,7 +36,22 @@ export function installCosmetics(document, api) {
       .sponsor-container,
       .DS0j8uh2_B2J1GeX8jS2,
       .bi41j5zJhoOgdH38v1Ma,
-      .mFtiCBZ8CC7MoLGk_hyJ
+      .mFtiCBZ8CC7MoLGk_hyJ,
+      /* Recent ads leavebehinds. The playlist request is separate from the
+         embedded-playlist-leavebehind slot, so slot blocking leaves the card up.
+         The wrapper covers Daily Mix, other playlists, episodes and see-all.
+         The show container is the same card on a podcast page, not the episode list. */
+      [data-testid="leavebehinds-wrapper"],
+      [data-testid="show-leavebehinds-container"],
+      /* Creative shells only. The audio-ad skip row and playlist artwork are not
+         included, so an escaped break can still be skipped and the cover stays. */
+      [data-testid="embedded-ad"],
+      [data-testid="embedded-ad-html-display"],
+      [data-testid="embedded-ad-html-creative"],
+      [data-testid="embedded-ad-carousel"],
+      [data-testid="ads-video-player-npv"],
+      [data-testid="standalone-video-ad-player"],
+      [data-testid="context-ad-logo"]
     ),
     section[aria-label=${advertisement}],
     span:has(> button[aria-label=${limited}]),

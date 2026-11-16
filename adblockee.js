@@ -1,4 +1,4 @@
-/*! AdBlockee v2.2.0
+/*! AdBlockee v2.2.1
  * MIT License
  *
  * Copyright (c) 2026 LennonAmos
@@ -58,7 +58,22 @@
       .sponsor-container,
       .DS0j8uh2_B2J1GeX8jS2,
       .bi41j5zJhoOgdH38v1Ma,
-      .mFtiCBZ8CC7MoLGk_hyJ
+      .mFtiCBZ8CC7MoLGk_hyJ,
+      /* Recent ads leavebehinds. The playlist request is separate from the
+         embedded-playlist-leavebehind slot, so slot blocking leaves the card up.
+         The wrapper covers Daily Mix, other playlists, episodes and see-all.
+         The show container is the same card on a podcast page, not the episode list. */
+      [data-testid="leavebehinds-wrapper"],
+      [data-testid="show-leavebehinds-container"],
+      /* Creative shells only. The audio-ad skip row and playlist artwork are not
+         included, so an escaped break can still be skipped and the cover stays. */
+      [data-testid="embedded-ad"],
+      [data-testid="embedded-ad-html-display"],
+      [data-testid="embedded-ad-html-creative"],
+      [data-testid="embedded-ad-carousel"],
+      [data-testid="ads-video-player-npv"],
+      [data-testid="standalone-video-ad-player"],
+      [data-testid="context-ad-logo"]
     ),
     section[aria-label=${advertisement}],
     span:has(> button[aria-label=${limited}]),
@@ -88,6 +103,34 @@
   }
   function removeCosmetics(document) {
     document.getElementById(STYLE_ID)?.remove();
+  }
+
+  // src/leavebehinds.js
+  var LEAVEBEHIND_ADS = /\/leavebehinds\/(?:mock\/)?ads(?:[?#]|$)/;
+  function isLeavebehindAdsRequest(input) {
+    const url = typeof input === "string" ? input : input?.url;
+    return typeof url === "string" && LEAVEBEHIND_ADS.test(url);
+  }
+  function installLeavebehindBlock(host) {
+    if (typeof host.fetch !== "function") return () => {
+    };
+    if (host.fetch.__adblockee) return host.fetch.__adblockeeRestore ?? (() => {
+    });
+    const original = host.fetch.bind(host);
+    const wrapped = async function(input, init) {
+      if (!isLeavebehindAdsRequest(input)) return original(input, init);
+      return new host.Response(JSON.stringify({ leavebehindAds: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    };
+    const restore = () => {
+      if (host.fetch === wrapped) host.fetch = original;
+    };
+    wrapped.__adblockee = true;
+    wrapped.__adblockeeRestore = restore;
+    host.fetch = wrapped;
+    return restore;
   }
 
   // src/slots.js
@@ -504,7 +547,7 @@
   }
 
   // src/controller.js
-  var VERSION = "2.2.0";
+  var VERSION = "2.2.1";
   function createController(host) {
     let active = false;
     let running = null;
@@ -521,6 +564,8 @@
     let guard;
     const applied = /* @__PURE__ */ new Map();
     let polls = 0;
+    let restoreLeavebehinds = () => {
+    };
     const state = {
       version: VERSION,
       cosmetic: false,
@@ -679,6 +724,7 @@
     function start() {
       if (active) return refresh();
       active = true;
+      restoreLeavebehinds = installLeavebehindBlock(host);
       state.cosmetic = installCosmetics(host.document, host.Spicetify);
       host.document.addEventListener("visibilitychange", onVisible);
       poll = host.setInterval(() => {
@@ -697,6 +743,9 @@
     }
     async function dispose({ restore = true } = {}) {
       active = false;
+      restoreLeavebehinds();
+      restoreLeavebehinds = () => {
+      };
       host.clearInterval(poll);
       host.clearInterval(heartbeat);
       host.clearInterval(adPoll);

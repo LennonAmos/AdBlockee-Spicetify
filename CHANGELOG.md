@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.1 — 2026-11-16
+
+- Hide the Recent ads section reported on Daily Mix playlists. Spotify loads those cards with a separate `/leavebehinds/ads` request, so blocking the `embedded-playlist-leavebehind` slot does not remove them. The request is answered locally with an empty list, and the section is hidden: the heading, advertiser, tagline and Learn more button. The same cards on other playlists, episode pages and the see-all ads page are covered. The matching card on a podcast show page is hidden too. Podcast audio is unchanged.
+- Hide now-playing display and video ad shells that can stay on screen when a creative escapes prevention: the embedded ad, its HTML and carousel creatives, the NPV video ad player, the standalone video ad player and the advertisement logo. Ad playback controls stay available. Playlist artwork is not hidden.
+- Keep the ad-request sink on the existing local discard address. Leavebehind blocking does not forward that request or its headers.
+
 ## 2.2.0 — 2026-10-23
 
 - Add native ad prevention ahead of playback recovery: request endpoint overrides, stream/display timing overrides and explicit slot-disable requests using Spotify's generated native service clients.

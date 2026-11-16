@@ -1,9 +1,10 @@
 import { installCosmetics, removeCosmetics } from "./cosmetics.js";
+import { installLeavebehindBlock } from "./leavebehinds.js";
 import { createSlotGuard, MUSIC_SLOTS } from "./slots.js";
 import { createActiveAdRecovery } from "./active-ad.js";
 import { createNativePrevention } from "./native-prevention.js";
 
-const VERSION = "2.2.0";
+const VERSION = "2.2.1";
 
 export function createController(host) {
   let active = false;
@@ -21,6 +22,7 @@ export function createController(host) {
   let guard;
   const applied = new Map();
   let polls = 0;
+  let restoreLeavebehinds = () => {};
   const state = {
     version: VERSION,
     cosmetic: false,
@@ -193,6 +195,7 @@ export function createController(host) {
   function start() {
     if (active) return refresh();
     active = true;
+    restoreLeavebehinds = installLeavebehindBlock(host);
     state.cosmetic = installCosmetics(host.document, host.Spicetify);
     host.document.addEventListener("visibilitychange", onVisible);
     poll = host.setInterval(() => {
@@ -216,6 +219,8 @@ export function createController(host) {
 
   async function dispose({ restore = true } = {}) {
     active = false;
+    restoreLeavebehinds();
+    restoreLeavebehinds = () => {};
     host.clearInterval(poll);
     host.clearInterval(heartbeat);
     host.clearInterval(adPoll);

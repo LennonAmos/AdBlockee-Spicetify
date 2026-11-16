@@ -1,7 +1,7 @@
 [
   {
     "name": "AdBlockee",
-    "description": "Ad blocker for Spotify: audio ads, sponsored playlist cards and Limited ads labels. Lightweight, local and no telemetry.",
+    "description": "Ad blocker for Spotify: audio ads, sponsored playlist cards, Recent ads cards and Limited ads labels. Lightweight, local and no telemetry.",
     "preview": "assets/icon.png",
     "main": "adblockee.js",
     "readme": "README.md",

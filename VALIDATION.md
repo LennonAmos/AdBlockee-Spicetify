@@ -1,3 +1,13 @@
+# Validation — 2.2.1
+
+Recent ads, 16 November 2026:
+
+- Compared the reported Daily Mix card with the installed Linux client, Spotify 1.3.8.620. `playlist-leavebehinds.js` renders a section titled with `podcast-ads.recent_ads` ("Recent ads"), `data-testid="leavebehinds-wrapper"`, and a card containing the advertiser, tagline and Learn more button. That matches the screenshot on issue 1. The reporter's client is Windows Spotify 1.2.96.518; the markup above is from 1.3.8.620, so the Windows build was not opened.
+- The section's data comes from POST `/leavebehinds/ads`, not from the `embedded-playlist-leavebehind` slot. Slot blocking therefore cannot remove it. 2.2.1 answers that request with an empty list when it goes through `window.fetch`, and hides the section with the test id. Show pages use `show-leavebehinds-container` for the same kind of card. Podcast slot ids are still excluded.
+- Now-playing creatives `embedded-ad`, `ads-video-player-npv`, `standalone-video-ad-player` and `context-ad-logo` are separate nodes from `ad-controls` and from sponsored-playlist cover art. The stylesheet targets the creatives only.
+- The local discard address `http://127.0.0.1:9/adblockee` is unchanged. It is the fail-closed sink already checked for native prevention. The new fetch short-circuit does not read or send the original request headers.
+- This pass did not open a logged-in Daily Mix. The checks are the client source above plus the automated tests.
+
 # Validation — 2.2.0
 
 Native prevention, 23 October 2026:
