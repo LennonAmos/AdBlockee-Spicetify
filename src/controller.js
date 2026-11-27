@@ -4,7 +4,7 @@ import { createSlotGuard, MUSIC_SLOTS } from "./slots.js";
 import { createActiveAdRecovery } from "./active-ad.js";
 import { createNativePrevention } from "./native-prevention.js";
 
-const VERSION = "2.2.1";
+const VERSION = "2.2.2";
 
 export function createController(host) {
   let active = false;

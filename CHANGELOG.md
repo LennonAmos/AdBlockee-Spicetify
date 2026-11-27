@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.2 — 2026-11-27
+
+- Hide the “Limited ads” title Spotify places on sponsored playlists in search results, playlist cards, recents and the playlist header. The playlist name, owner and description stay. The dot that trailed that title is removed too. On the playlist header, the info button beside the title is hidden with it.
+
 ## 2.2.1 — 2026-11-16
 
 - Hide the Recent ads section reported on Daily Mix playlists. Spotify loads those cards with a separate `/leavebehinds/ads` request, so blocking the `embedded-playlist-leavebehind` slot does not remove them. The request is answered locally with an empty list, and the section is hidden: the heading, advertiser, tagline and Learn more button. The same cards on other playlists, episode pages and the see-all ads page are covered. The matching card on a podcast show page is hidden too. Podcast audio is unchanged.

@@ -1,3 +1,11 @@
+# Validation — 2.2.2
+
+Limited ads titles, 27 November 2026:
+
+- Spotify 1.3.8.620 renders the title `ad-formats.sponsored-playlist.header.reward-title` ("Limited ads") as its own text node, class `pI3vFQ1NXHe8F9lF4XpW`, inside chip `QtDUlqVXUrdVbmLeSFjY`. That chip is what search rows, home playlist cards and recents add. The playlist header uses the same title node inside `nP8TsxXGm585u0n2AD_g`, next to the info button. The old rule only matched a direct-child info button, so these titles stayed up.
+- Loaded 2.2.2 into the running Linux client. On Home, Discover Weekly kept its description and the yellow title computed as `display: none`. Holiday Magic's "Playlist • Spotify" line stayed in the card and the title was hidden. In search, Discover Weekly read "Playlist • Spotify" with no trailing dot and no "Limited ads". The Holiday Magic playlist page header showed the playlist name, Spotify and the save count, with no Limited ads title. The open track was left playing and the view was returned to Liked Songs.
+- 51 automated tests passed, including the new card, search-row and playlist-header cases. `npm run check` rebuilt `adblockee.js` and the syntax check passed.
+
 # Validation — 2.2.1
 
 Recent ads, 16 November 2026:
